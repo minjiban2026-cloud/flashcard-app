@@ -4,8 +4,6 @@ import json
 import os
 from uuid import uuid4
 from datetime import datetime
-import streamlit as st
-st.write("Supabase URL OK:", st.secrets["SUPABASE_URL"][:20])
 
 # =======================
 # 기본 설정
@@ -325,6 +323,7 @@ elif page == "🛠️ 카드 관리":
                 st.session_state.cards.pop(idx)
                 save_cards()
                 st.rerun()
+
 
 
 
