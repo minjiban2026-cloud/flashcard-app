@@ -257,17 +257,20 @@ elif page == "🧠 암기 모드":
                 unsafe_allow_html=True
             )
 
-            # 👉 암기 컨트롤 (Enter-only / 버튼)
-            render_study_controls(idx, enter_only=enter_only)
+            # 👉 버튼 컨트롤 (Enter-only OFF일 때)
+            if not enter_only:
+                render_study_controls(idx, enter_only=False)
 
-# ⌨️ Enter-only: chat_input으로 Enter 이벤트 받기
-if enter_only:
-    msg = st.chat_input("Enter만 누르면 진행 (아무 글자나 입력해도 됨)", key="enter_box")
+            # 👉 Enter-only 입력 (암기 모드 안에 있어야 함!)
+            if enter_only:
+                msg = st.chat_input(
+                    "Enter만 누르면 다음 단계로 이동",
+                    key="enter_box"
+                )
 
-    # Enter를 누르면 msg가 None이 아니게 들어옴
-    if msg is not None:
-        handle_enter(idx)
-        st.rerun()
+                if msg is not None:
+                    handle_enter(idx)
+                    st.rerun()
 
 
 
@@ -338,6 +341,7 @@ elif page == "🛠️ 카드 관리":
                 ):
                     st.success("불러오기 완료")
                     st.rerun()
+
 
 
 
