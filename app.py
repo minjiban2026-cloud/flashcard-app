@@ -154,23 +154,27 @@ elif page == "🧠 암기 모드":
     st.subheader("암기 모드")
 
     if not st.session_state.cards:
-        st.info("카드가 없습니다.")
+        st.warning("카드가 없습니다.")
         st.stop()
 
+    # ===== 옵션 =====
     cat = st.selectbox("카테고리", categories())
     random_mode = st.checkbox("🔀 랜덤")
     wrong_only = st.checkbox("❗ 틀린 카드만")
     enter_only = st.checkbox("⌨️ Enter-only 모드", value=True)
 
+    # ===== 카드 필터 =====
     base = [c for c in st.session_state.cards if c["category"] == cat]
     if wrong_only:
-        base = [c for c in base if c["wrong_count"] > 0]
+        base = [c for c in base if int(c.get("wrong_count", 0)) > 0]
 
     if not base:
-        st.info("표시할 카드 없음")
+        st.info("표시할 카드가 없습니다.")
         st.stop()
 
+    # ===== 순서 결정 =====
     ids = [c["id"] for c in base]
+
     if random_mode:
         if set(st.session_state.shuffled_ids) != set(ids):
             st.session_state.shuffled_ids = random.sample(ids, len(ids))
@@ -181,20 +185,43 @@ elif page == "🧠 암기 모드":
         order = ids
         st.session_state.shuffled_ids = []
 
-    card = next(c for c in base if c["id"] == order[st.session_state.index % len(order)])
+    card_id = order[st.session_state.index % len(order)]
+    card = next(c for c in base if c["id"] == card_id)
 
-    label = "정답" if st.session_state.show_back else "문제"
-    text = card["back"] if st.session_state.show_back else card["front"]
-    img = card["back_image_url"] if st.session_state.show_back else card["front_image_url"]
+    # ===== 앞/뒤 내용 결정 =====
+    is_back = st.session_state.show_back
 
-    st.markdown(f"<div style='padding:40px;text-align:center;font-size:24px;"
-                f"background:#f9fafb;border-radius:16px;'><b>{label}</b><br><br>{text}</div>",
-                unsafe_allow_html=True)
-    if img:
-        st.image(img, use_column_width=True)
+    text = card["back"] if is_back else card["front"]
+    img_url = card["back_image_url"] if is_back else card["front_image_url"]
+    label = "정답" if is_back else "문제"
 
+    # ===== 카드 UI =====
+    st.markdown(
+        f"""
+        <div style="
+            max-width:650px;
+            margin:30px auto;
+            padding:40px;
+            background:#f9fafb;
+            border-radius:16px;
+            box-shadow:0 4px 12px rgba(0,0,0,0.08);
+            text-align:center;
+            font-size:24px;
+            line-height:1.6;
+        ">
+            <b>[{label}]</b><br><br>{text}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # ===== 이미지 표시 (있을 때만) =====
+    if img_url:
+        st.image(img_url, use_column_width=True)
+
+    # ===== 컨트롤 =====
     if enter_only:
-        msg = st.chat_input("Enter (문제→정답→다음)")
+        msg = st.chat_input("Enter (문제 → 정답 → 다음 카드)")
         if msg is not None:
             if not st.session_state.show_back:
                 st.session_state.show_back = True
@@ -204,22 +231,23 @@ elif page == "🧠 암기 모드":
             st.rerun()
     else:
         if not st.session_state.show_back:
-            if st.button("정답 보기"):
+            if st.button("정답 보기", use_container_width=True):
                 st.session_state.show_back = True
                 st.rerun()
         else:
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("✅ 맞음"):
+                if st.button("✅ 맞음", use_container_width=True):
                     st.session_state.show_back = False
                     st.session_state.index += 1
                     st.rerun()
             with c2:
-                if st.button("❌ 틀림"):
+                if st.button("❌ 틀림", use_container_width=True):
                     increment_wrong(card)
                     st.session_state.show_back = False
                     st.session_state.index += 1
                     sync(rerun=True)
+
 
 # =======================
 # 3️⃣ 카드 관리
@@ -250,6 +278,7 @@ elif page == "🛠️ 카드 관리":
         if st.button("🗑️ 삭제"):
             delete_card(card["id"])
             sync(rerun=True)
+
 
 
 
