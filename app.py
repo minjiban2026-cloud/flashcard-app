@@ -292,16 +292,23 @@ elif page == "🛠️ 카드 관리":
         cid = st.selectbox(
             "카드 선택",
             ids,
+            key="selected_card_id",
             format_func=lambda x: next(
                 c["front"] for c in cards if c["id"] == x
             )
         )
 
-        idx = find_card_index_by_id(cid)
+        idx = find_card_index_by_id(st.session_state.selected_card_id)
         card = st.session_state.cards[idx]
 
-        st.text_input("앞면", card["front"], key="edit_front")
-        st.text_input("뒷면", card["back"], key="edit_back")
+        # 🔑 카드 변경 시 편집값 동기화
+        if st.session_state.get("editing_card_id") != card["id"]:
+            st.session_state.edit_front = card["front"]
+            st.session_state.edit_back = card["back"]
+            st.session_state.editing_card_id = card["id"]
+
+        st.text_input("앞면", key="edit_front")
+        st.text_input("뒷면", key="edit_back")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -317,30 +324,7 @@ elif page == "🛠️ 카드 관리":
                 save_cards()
                 st.rerun()
 
-        st.divider()
-        st.subheader("📦 카드 백업 / 불러오기")
 
-        filename, filedata = export_cards()
-        st.download_button(
-            "📤 백업 파일 다운로드",
-            filedata,
-            file_name=filename,
-            mime="application/json"
-        )
-
-        uploaded = st.file_uploader("📥 백업 파일 불러오기", type="json")
-        if uploaded:
-            mode = st.radio(
-                "불러오기 방식",
-                ["기존 카드에 추가", "기존 카드 전체 교체"]
-            )
-            if st.button("불러오기 실행"):
-                if import_cards(
-                    uploaded,
-                    "replace" if "전체" in mode else "append"
-                ):
-                    st.success("불러오기 완료")
-                    st.rerun()
 
 
 
