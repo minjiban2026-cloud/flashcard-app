@@ -214,7 +214,7 @@ with tab_study:
                 unsafe_allow_html=True
             )
 
-            if not st.session_state.show_back:
+if not st.session_state.show_back:
     st.button(
         "정답 보기",
         use_container_width=True,
@@ -235,6 +235,7 @@ else:
             on_click=mark_wrong,
             args=(idx,)
         )
+    
 
 # =======================
 # 3️⃣ 카드 관리
@@ -295,4 +296,5 @@ with tab_manage:
                 if ok:
                     st.success("불러오기 완료")
                     st.rerun()
+
 
