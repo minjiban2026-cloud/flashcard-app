@@ -124,7 +124,12 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-tab_add, tab_study, tab_manage = st.tabs(["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"])
+page = st.radio(
+    "메뉴",
+    ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"],
+    horizontal=True,
+    key="page"
+)
 
 # =======================
 # 카드 입력
@@ -146,17 +151,33 @@ def save_card():
         st.session_state.input_front = ""
         st.session_state.input_back = ""
 
-with tab_add:
+if page == "➕ 카드 입력":
     st.subheader("카드 입력")
-    st.text_input("카테고리", key="input_category")
-    st.text_input("앞면 (문제)", key="input_front")
-    st.text_input("뒷면 (정답)", key="input_back", on_change=save_card)
+
+    st.text_input(
+        "카테고리",
+        key="input_category",
+        placeholder="예: 전기전자, 교육과정"
+    )
+    st.text_input(
+        "앞면 (문제)",
+        key="input_front",
+        placeholder="용어, 정의, 질문"
+    )
+    st.text_input(
+        "뒷면 (정답)",
+        key="input_back",
+        placeholder="정답 입력 후 Enter",
+        on_change=save_card
+    )
+
     st.info(f"현재 카드 수 : {len(st.session_state.cards)} 장")
+
 
 # =======================
 # 암기 모드
 # =======================
-with tab_study:
+elif page == "🧠 암기 모드":
     st.subheader("암기 모드")
 
     if not st.session_state.cards:
@@ -183,7 +204,10 @@ with tab_study:
             ids = [c["id"] for c in base]
 
             if random_mode:
-                if not st.session_state.shuffled_ids or set(st.session_state.shuffled_ids) != set(ids):
+                if (
+                    not st.session_state.shuffled_ids
+                    or set(st.session_state.shuffled_ids) != set(ids)
+                ):
                     st.session_state.shuffled_ids = ids.copy()
                     random.shuffle(st.session_state.shuffled_ids)
                     st.session_state.index = 0
@@ -219,12 +243,14 @@ with tab_study:
                 unsafe_allow_html=True
             )
 
+            # 👉 암기 컨트롤 (Enter-only / 버튼)
             render_study_controls(idx, enter_only=enter_only)
+
 
 # =======================
 # 카드 관리
 # =======================
-with tab_manage:
+elif page == "🛠️ 카드 관리":
     st.subheader("카드 관리")
 
     if not st.session_state.cards:
@@ -239,7 +265,9 @@ with tab_manage:
         cid = st.selectbox(
             "카드 선택",
             ids,
-            format_func=lambda x: next(c["front"] for c in cards if c["id"] == x)
+            format_func=lambda x: next(
+                c["front"] for c in cards if c["id"] == x
+            )
         )
 
         idx = find_card_index_by_id(cid)
@@ -255,6 +283,7 @@ with tab_manage:
                 card["back"] = st.session_state.edit_back
                 save_cards()
                 st.success("수정 완료")
+
         with col2:
             if st.button("🗑️ 카드 삭제"):
                 st.session_state.cards.pop(idx)
@@ -265,15 +294,28 @@ with tab_manage:
         st.subheader("📦 카드 백업 / 불러오기")
 
         filename, filedata = export_cards()
-        st.download_button("📤 백업 파일 다운로드", filedata, file_name=filename)
+        st.download_button(
+            "📤 백업 파일 다운로드",
+            filedata,
+            file_name=filename,
+            mime="application/json"
+        )
 
         uploaded = st.file_uploader("📥 백업 파일 불러오기", type="json")
         if uploaded:
-            mode = st.radio("불러오기 방식", ["기존 카드에 추가", "기존 카드 전체 교체"])
+            mode = st.radio(
+                "불러오기 방식",
+                ["기존 카드에 추가", "기존 카드 전체 교체"]
+            )
             if st.button("불러오기 실행"):
-                if import_cards(uploaded, "replace" if "전체" in mode else "append"):
+                if import_cards(
+                    uploaded,
+                    "replace" if "전체" in mode else "append"
+                ):
                     st.success("불러오기 완료")
                     st.rerun()
+
+
 
 
 
