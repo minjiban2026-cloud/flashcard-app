@@ -30,11 +30,13 @@ def fetch_cards():
 def auto_backup():
     cards = fetch_cards()
     content = json.dumps(cards, ensure_ascii=False, indent=2)
+
     filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
     supabase.storage.from_(BACKUP_BUCKET).upload(
-        filename,
-        content.encode("utf-8"),
-        file_options={"content-type": "application/json"}
+        path=filename,
+        file=content.encode("utf-8"),
+        file_options={"content-type": "application/json"},
     )
 
 def upload_image(file, folder):
@@ -57,7 +59,6 @@ def insert_card(category, front, back, front_img, back_img):
         "back_image_url": back_img,
         "wrong_count": 0
     }).execute()
-    auto_backup()
 
 def update_card(card_id, category, front, back, front_img, back_img):
     supabase.table(TABLE).update({
@@ -67,11 +68,9 @@ def update_card(card_id, category, front, back, front_img, back_img):
         "front_image_url": front_img,
         "back_image_url": back_img
     }).eq("id", card_id).execute()
-    auto_backup()
 
 def delete_card(card_id):
     supabase.table(TABLE).delete().eq("id", card_id).execute()
-    auto_backup()
 
 def increment_wrong(card):
     supabase.table(TABLE).update({
@@ -124,6 +123,13 @@ st.download_button(
     file_name=f"flashcard_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
     mime="application/json"
 )
+
+if "did_auto_backup" not in st.session_state:
+    try:
+        auto_backup()
+        st.session_state.did_auto_backup = True
+    except Exception as e:
+        st.warning("자동 백업은 건너뛰었어요 (권한/연결 문제)")
 
 # =======================
 # 1️⃣ 카드 입력
@@ -278,6 +284,7 @@ elif page == "🛠️ 카드 관리":
         if st.button("🗑️ 삭제"):
             delete_card(card["id"])
             sync(rerun=True)
+
 
 
 
