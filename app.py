@@ -4,29 +4,11 @@ import json
 import os
 from uuid import uuid4
 from datetime import datetime
-def show_answer():
-    st.session_state.show_back = True
-    st.rerun()
 
-def mark_correct():
-    st.session_state.show_back = False
-    st.session_state.index += 1
-    st.rerun()
-
-def mark_wrong(card_idx):
-    st.session_state.cards[card_idx]["wrong_count"] += 1
-    save_cards()
-    st.session_state.show_back = False
-    st.session_state.index += 1
-    st.rerun()
 # =======================
 # 기본 설정
 # =======================
-st.set_page_config(
-    page_title="임용 암기 카드",
-    layout="centered"
-)
-
+st.set_page_config(page_title="임용 암기 카드", layout="centered")
 DATA_FILE = "cards.json"
 
 # =======================
@@ -73,22 +55,16 @@ def import_cards(uploaded_file, mode):
 # =======================
 if "cards" not in st.session_state:
     st.session_state.cards = load_cards()
-
 if "index" not in st.session_state:
     st.session_state.index = 0
-
 if "show_back" not in st.session_state:
     st.session_state.show_back = False
-
 if "shuffled_ids" not in st.session_state:
     st.session_state.shuffled_ids = []
-
 if "input_category" not in st.session_state:
     st.session_state.input_category = ""
-
 if "input_front" not in st.session_state:
     st.session_state.input_front = ""
-
 if "input_back" not in st.session_state:
     st.session_state.input_back = ""
 
@@ -102,24 +78,56 @@ def find_card_index_by_id(card_id):
     return -1
 
 # =======================
+# 암기 콜백 (빠른 반응)
+# =======================
+def show_answer():
+    st.session_state.show_back = True
+
+def mark_correct():
+    st.session_state.show_back = False
+    st.session_state.index += 1
+    st.rerun()
+
+def mark_wrong(card_idx):
+    st.session_state.cards[card_idx]["wrong_count"] += 1
+    save_cards()
+    st.session_state.show_back = False
+    st.session_state.index += 1
+    st.rerun()
+
+def render_study_controls(card_idx, enter_only=True):
+    if enter_only:
+        if not st.session_state.show_back:
+            st.button("Enter → 정답 보기", use_container_width=True, on_click=show_answer)
+        else:
+            st.button("Enter → 다음 카드", use_container_width=True, on_click=mark_correct)
+    else:
+        if not st.session_state.show_back:
+            st.button("정답 보기", use_container_width=True, on_click=show_answer)
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.button("✅ 맞음", use_container_width=True, on_click=mark_correct)
+            with c2:
+                st.button("❌ 틀림", use_container_width=True, on_click=mark_wrong, args=(card_idx,))
+
+# =======================
 # 상단 UI
 # =======================
 st.markdown(
     """
     <h2 style="text-align:center;">📘 임용 대비 암기 카드</h2>
     <p style="text-align:center; color:gray;">
-    친구와 함께 만드는 임용 공부용 플래시카드 앱
+    친구와 함께 실시간으로 공부하는 임용 스터디 웹앱
     </p>
     """,
     unsafe_allow_html=True
 )
 
-tab_add, tab_study, tab_manage = st.tabs(
-    ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"]
-)
+tab_add, tab_study, tab_manage = st.tabs(["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"])
 
 # =======================
-# 카드 저장 콜백
+# 카드 입력
 # =======================
 def save_card():
     c = st.session_state.input_category.strip()
@@ -138,20 +146,15 @@ def save_card():
         st.session_state.input_front = ""
         st.session_state.input_back = ""
 
-# =======================
-# 1️⃣ 카드 입력
-# =======================
 with tab_add:
     st.subheader("카드 입력")
-
-    st.text_input("카테고리", key="input_category", placeholder="예: 전기전자, 교육과정")
-    st.text_input("앞면 (문제)", key="input_front", placeholder="질문 / 용어 / 정의")
-    st.text_input("뒷면 (정답)", key="input_back", placeholder="정답 입력 후 Enter", on_change=save_card)
-
+    st.text_input("카테고리", key="input_category")
+    st.text_input("앞면 (문제)", key="input_front")
+    st.text_input("뒷면 (정답)", key="input_back", on_change=save_card)
     st.info(f"현재 카드 수 : {len(st.session_state.cards)} 장")
 
 # =======================
-# 2️⃣ 암기 모드
+# 암기 모드
 # =======================
 with tab_study:
     st.subheader("암기 모드")
@@ -162,11 +165,13 @@ with tab_study:
         categories = sorted(set(c["category"] for c in st.session_state.cards))
         selected = st.selectbox("카테고리 선택", categories)
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             random_mode = st.checkbox("🔀 랜덤")
         with col2:
             wrong_only = st.checkbox("❗ 틀린 카드만")
+        with col3:
+            enter_only = st.checkbox("⌨️ Enter-only 모드", value=True)
 
         base = [c for c in st.session_state.cards if c["category"] == selected]
         if wrong_only:
@@ -214,31 +219,10 @@ with tab_study:
                 unsafe_allow_html=True
             )
 
-if not st.session_state.show_back:
-    st.button(
-        "정답 보기",
-        use_container_width=True,
-        on_click=show_answer
-    )
-else:
-    c1, c2 = st.columns(2)
-    with c1:
-        st.button(
-            "✅ 맞음",
-            use_container_width=True,
-            on_click=mark_correct
-        )
-    with c2:
-        st.button(
-            "❌ 틀림",
-            use_container_width=True,
-            on_click=mark_wrong,
-            args=(idx,)
-        )
-    
+            render_study_controls(idx, enter_only=enter_only)
 
 # =======================
-# 3️⃣ 카드 관리
+# 카드 관리
 # =======================
 with tab_manage:
     st.subheader("카드 관리")
@@ -281,20 +265,16 @@ with tab_manage:
         st.subheader("📦 카드 백업 / 불러오기")
 
         filename, filedata = export_cards()
-        st.download_button(
-            "📤 백업 파일 다운로드",
-            filedata,
-            file_name=filename,
-            mime="application/json"
-        )
+        st.download_button("📤 백업 파일 다운로드", filedata, file_name=filename)
 
         uploaded = st.file_uploader("📥 백업 파일 불러오기", type="json")
         if uploaded:
             mode = st.radio("불러오기 방식", ["기존 카드에 추가", "기존 카드 전체 교체"])
             if st.button("불러오기 실행"):
-                ok = import_cards(uploaded, "replace" if "전체" in mode else "append")
-                if ok:
+                if import_cards(uploaded, "replace" if "전체" in mode else "append"):
                     st.success("불러오기 완료")
                     st.rerun()
+
+
 
 
