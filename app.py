@@ -4,7 +4,21 @@ import json
 import os
 from uuid import uuid4
 from datetime import datetime
+def show_answer():
+    st.session_state.show_back = True
+    st.rerun()
 
+def mark_correct():
+    st.session_state.show_back = False
+    st.session_state.index += 1
+    st.rerun()
+
+def mark_wrong(card_idx):
+    st.session_state.cards[card_idx]["wrong_count"] += 1
+    save_cards()
+    st.session_state.show_back = False
+    st.session_state.index += 1
+    st.rerun()
 # =======================
 # 기본 설정
 # =======================
@@ -201,20 +215,26 @@ with tab_study:
             )
 
             if not st.session_state.show_back:
-                if st.button("정답 보기", use_container_width=True):
-                    st.session_state.show_back = True
-            else:
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("✅ 맞음", use_container_width=True):
-                        st.session_state.show_back = False
-                        st.session_state.index += 1
-                with c2:
-                    if st.button("❌ 틀림", use_container_width=True):
-                        st.session_state.cards[idx]["wrong_count"] += 1
-                        save_cards()
-                        st.session_state.show_back = False
-                        st.session_state.index += 1
+    st.button(
+        "정답 보기",
+        use_container_width=True,
+        on_click=show_answer
+    )
+else:
+    c1, c2 = st.columns(2)
+    with c1:
+        st.button(
+            "✅ 맞음",
+            use_container_width=True,
+            on_click=mark_correct
+        )
+    with c2:
+        st.button(
+            "❌ 틀림",
+            use_container_width=True,
+            on_click=mark_wrong,
+            args=(idx,)
+        )
 
 # =======================
 # 3️⃣ 카드 관리
@@ -275,3 +295,4 @@ with tab_manage:
                 if ok:
                     st.success("불러오기 완료")
                     st.rerun()
+
