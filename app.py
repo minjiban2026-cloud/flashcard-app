@@ -2,8 +2,14 @@ import streamlit as st
 import random
 import json
 import os
+from supabase import create_client
 from uuid import uuid4
 from datetime import datetime
+
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # =======================
 # 기본 설정
@@ -323,6 +329,19 @@ elif page == "🛠️ 카드 관리":
                 st.session_state.cards.pop(idx)
                 save_cards()
                 st.rerun()
+
+st.divider()
+st.subheader("🧪 Supabase INSERT 테스트")
+
+if st.button("DB에 테스트 카드 저장"):
+    res = supabase.table("flashcard_app").insert({
+        "category": "테스트",
+        "front": "이게 보이면",
+        "back": "Supabase 연결 성공",
+        "wrong_count": 0
+    }).execute()
+
+    st.write(res.data)
 
 
 
