@@ -1,0 +1,277 @@
+import streamlit as st
+import random
+import json
+import os
+from uuid import uuid4
+from datetime import datetime
+
+# =======================
+# 기본 설정
+# =======================
+st.set_page_config(
+    page_title="임용 암기 카드",
+    layout="centered"
+)
+
+DATA_FILE = "cards.json"
+
+# =======================
+# 데이터 저장 / 로드
+# =======================
+def load_cards():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_cards():
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(st.session_state.cards, f, ensure_ascii=False, indent=2)
+
+def export_cards():
+    filename = f"cards_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return filename, json.dumps(st.session_state.cards, ensure_ascii=False, indent=2)
+
+def import_cards(uploaded_file, mode):
+    data = json.load(uploaded_file)
+    if not isinstance(data, list):
+        return False
+
+    for c in data:
+        if "id" not in c:
+            c["id"] = uuid4().hex[:10]
+        if "wrong_count" not in c:
+            c["wrong_count"] = 0
+
+    if mode == "replace":
+        st.session_state.cards = data
+    else:
+        existing_ids = {c["id"] for c in st.session_state.cards}
+        for c in data:
+            if c["id"] not in existing_ids:
+                st.session_state.cards.append(c)
+
+    save_cards()
+    return True
+
+# =======================
+# 세션 상태 초기화
+# =======================
+if "cards" not in st.session_state:
+    st.session_state.cards = load_cards()
+
+if "index" not in st.session_state:
+    st.session_state.index = 0
+
+if "show_back" not in st.session_state:
+    st.session_state.show_back = False
+
+if "shuffled_ids" not in st.session_state:
+    st.session_state.shuffled_ids = []
+
+if "input_category" not in st.session_state:
+    st.session_state.input_category = ""
+
+if "input_front" not in st.session_state:
+    st.session_state.input_front = ""
+
+if "input_back" not in st.session_state:
+    st.session_state.input_back = ""
+
+# =======================
+# 유틸
+# =======================
+def find_card_index_by_id(card_id):
+    for i, c in enumerate(st.session_state.cards):
+        if c["id"] == card_id:
+            return i
+    return -1
+
+# =======================
+# 상단 UI
+# =======================
+st.markdown(
+    """
+    <h2 style="text-align:center;">📘 임용 대비 암기 카드</h2>
+    <p style="text-align:center; color:gray;">
+    친구와 함께 만드는 임용 공부용 플래시카드 앱
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+tab_add, tab_study, tab_manage = st.tabs(
+    ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"]
+)
+
+# =======================
+# 카드 저장 콜백
+# =======================
+def save_card():
+    c = st.session_state.input_category.strip()
+    f = st.session_state.input_front.strip()
+    b = st.session_state.input_back.strip()
+
+    if c and f and b:
+        st.session_state.cards.append({
+            "id": uuid4().hex[:10],
+            "category": c,
+            "front": f,
+            "back": b,
+            "wrong_count": 0
+        })
+        save_cards()
+        st.session_state.input_front = ""
+        st.session_state.input_back = ""
+
+# =======================
+# 1️⃣ 카드 입력
+# =======================
+with tab_add:
+    st.subheader("카드 입력")
+
+    st.text_input("카테고리", key="input_category", placeholder="예: 전기전자, 교육과정")
+    st.text_input("앞면 (문제)", key="input_front", placeholder="질문 / 용어 / 정의")
+    st.text_input("뒷면 (정답)", key="input_back", placeholder="정답 입력 후 Enter", on_change=save_card)
+
+    st.info(f"현재 카드 수 : {len(st.session_state.cards)} 장")
+
+# =======================
+# 2️⃣ 암기 모드
+# =======================
+with tab_study:
+    st.subheader("암기 모드")
+
+    if not st.session_state.cards:
+        st.warning("먼저 카드를 입력하세요.")
+    else:
+        categories = sorted(set(c["category"] for c in st.session_state.cards))
+        selected = st.selectbox("카테고리 선택", categories)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            random_mode = st.checkbox("🔀 랜덤")
+        with col2:
+            wrong_only = st.checkbox("❗ 틀린 카드만")
+
+        base = [c for c in st.session_state.cards if c["category"] == selected]
+        if wrong_only:
+            base = [c for c in base if c["wrong_count"] > 0]
+
+        if not base:
+            st.info("표시할 카드가 없습니다.")
+        else:
+            ids = [c["id"] for c in base]
+
+            if random_mode:
+                if not st.session_state.shuffled_ids or set(st.session_state.shuffled_ids) != set(ids):
+                    st.session_state.shuffled_ids = ids.copy()
+                    random.shuffle(st.session_state.shuffled_ids)
+                    st.session_state.index = 0
+                    st.session_state.show_back = False
+                order = st.session_state.shuffled_ids
+            else:
+                order = ids
+                st.session_state.shuffled_ids = []
+
+            cid = order[st.session_state.index % len(order)]
+            idx = find_card_index_by_id(cid)
+            card = st.session_state.cards[idx]
+
+            label = "정답" if st.session_state.show_back else "문제"
+            content = card["back"] if st.session_state.show_back else card["front"]
+
+            st.markdown(
+                f"""
+                <div style="
+                    max-width:600px;
+                    margin:30px auto;
+                    padding:50px;
+                    background:#f9fafb;
+                    border-radius:16px;
+                    box-shadow:0 4px 12px rgba(0,0,0,0.08);
+                    text-align:center;
+                    font-size:24px;
+                    line-height:1.6;
+                ">
+                    <b>[{label}]</b><br><br>{content}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if not st.session_state.show_back:
+                if st.button("정답 보기", use_container_width=True):
+                    st.session_state.show_back = True
+            else:
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ 맞음", use_container_width=True):
+                        st.session_state.show_back = False
+                        st.session_state.index += 1
+                with c2:
+                    if st.button("❌ 틀림", use_container_width=True):
+                        st.session_state.cards[idx]["wrong_count"] += 1
+                        save_cards()
+                        st.session_state.show_back = False
+                        st.session_state.index += 1
+
+# =======================
+# 3️⃣ 카드 관리
+# =======================
+with tab_manage:
+    st.subheader("카드 관리")
+
+    if not st.session_state.cards:
+        st.info("카드가 없습니다.")
+    else:
+        categories = sorted(set(c["category"] for c in st.session_state.cards))
+        cat = st.selectbox("카테고리", categories)
+
+        cards = [c for c in st.session_state.cards if c["category"] == cat]
+        ids = [c["id"] for c in cards]
+
+        cid = st.selectbox(
+            "카드 선택",
+            ids,
+            format_func=lambda x: next(c["front"] for c in cards if c["id"] == x)
+        )
+
+        idx = find_card_index_by_id(cid)
+        card = st.session_state.cards[idx]
+
+        st.text_input("앞면", card["front"], key="edit_front")
+        st.text_input("뒷면", card["back"], key="edit_back")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 수정 저장"):
+                card["front"] = st.session_state.edit_front
+                card["back"] = st.session_state.edit_back
+                save_cards()
+                st.success("수정 완료")
+        with col2:
+            if st.button("🗑️ 카드 삭제"):
+                st.session_state.cards.pop(idx)
+                save_cards()
+                st.rerun()
+
+        st.divider()
+        st.subheader("📦 카드 백업 / 불러오기")
+
+        filename, filedata = export_cards()
+        st.download_button(
+            "📤 백업 파일 다운로드",
+            filedata,
+            file_name=filename,
+            mime="application/json"
+        )
+
+        uploaded = st.file_uploader("📥 백업 파일 불러오기", type="json")
+        if uploaded:
+            mode = st.radio("불러오기 방식", ["기존 카드에 추가", "기존 카드 전체 교체"])
+            if st.button("불러오기 실행"):
+                ok = import_cards(uploaded, "replace" if "전체" in mode else "append")
+                if ok:
+                    st.success("불러오기 완료")
+                    st.rerun()
