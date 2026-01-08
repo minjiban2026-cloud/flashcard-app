@@ -27,14 +27,21 @@ def fetch_cards():
     return supabase.table(TABLE).select("*").order("created_at").execute().data or []
 
 def auto_backup():
-    cards = fetch_cards()
-    content = json.dumps(cards, ensure_ascii=False, indent=2)
-    filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    supabase.storage.from_(BACKUP_BUCKET).upload(
-        filename,
-        content.encode("utf-8"),
-        file_options={"content-type": "application/json"},
-    )
+    try:
+        cards = fetch_cards()
+        content = json.dumps(cards, ensure_ascii=False, indent=2)
+        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        supabase.storage.from_(BACKUP_BUCKET).upload(
+            filename,
+            content.encode("utf-8"),
+            file_options={"content-type": "application/json"},
+        )
+
+    except Exception as e:
+        # ❗ 백업 실패해도 앱은 계속 동작
+        st.warning("⚠️ 자동 백업 실패 (권한 또는 스토리지 설정 문제)")
+
 
 def upload_image(file, folder):
     if file is None:
@@ -260,6 +267,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
