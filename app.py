@@ -174,6 +174,12 @@ elif page == "🧠 암기 모드":
     random_mode = st.checkbox("🔀 랜덤")
     wrong_only = st.checkbox("❗ 틀린 카드만")
     enter_only = st.checkbox("⌨️ Enter-only", value=True)
+# 🔄 다시 섞기 버튼 (랜덤 모드일 때만)
+if random_mode:
+    if st.button("🔄 다시 섞기"):
+        st.session_state.order = random.sample(ids, len(ids))
+        st.session_state.index = 0
+        st.session_state.show_back = False
 
     base = [c for c in cards if c["category"] == cat]
     if wrong_only:
@@ -267,6 +273,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
