@@ -347,6 +347,28 @@ elif page == "🛠️ 카드 관리":
                 sync_from_db(rerun=True)
 
 
+import json
+
+st.divider()
+st.subheader("🔁 JSON → DB 이관 (1회용)")
+
+uploaded = st.file_uploader("cards.json 업로드", type="json")
+
+if uploaded and st.button("DB로 이관"):
+    data = json.load(uploaded)
+
+    for c in data:
+        supabase.table("flashcard_app").insert({
+            "category": c["category"],
+            "front": c["front"],
+            "back": c["back"],
+            "wrong_count": c.get("wrong_count", 0)
+        }).execute()
+
+    st.success(f"{len(data)}개 카드 DB 이관 완료")
+    st.session_state.cards = fetch_cards()
+    st.rerun()
+
 
 
 
