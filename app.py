@@ -67,6 +67,8 @@ if "input_front" not in st.session_state:
     st.session_state.input_front = ""
 if "input_back" not in st.session_state:
     st.session_state.input_back = ""
+if "enter_trigger" not in st.session_state:
+    st.session_state.enter_trigger = ""
 
 # =======================
 # 유틸
@@ -94,6 +96,18 @@ def mark_wrong(card_idx):
     st.session_state.show_back = False
     st.session_state.index += 1
     st.rerun()
+
+def handle_enter(card_idx):
+    # 문제 상태 → 정답 보기
+    if not st.session_state.show_back:
+        st.session_state.show_back = True
+    # 정답 상태 → 다음 카드
+    else:
+        st.session_state.show_back = False
+        st.session_state.index += 1
+
+    # 입력값 비우기 (다시 Enter 받을 수 있게)
+    st.session_state.enter_trigger = ""
 
 def render_study_controls(card_idx, enter_only=True):
     if enter_only:
@@ -314,6 +328,7 @@ elif page == "🛠️ 카드 관리":
                 ):
                     st.success("불러오기 완료")
                     st.rerun()
+
 
 
 
