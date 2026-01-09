@@ -98,6 +98,9 @@ if "show_back" not in st.session_state:
 if "order" not in st.session_state:
     st.session_state.order = []
 
+# ✅ 반드시 추가 (file_uploader 리셋용)
+if "upload_key" not in st.session_state:
+    st.session_state.upload_key = 0
 # =======================
 # 공통 유틸
 # =======================
@@ -334,6 +337,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
