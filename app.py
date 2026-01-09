@@ -118,6 +118,39 @@ page = st.radio(
     ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"],
     horizontal=True
 )
+# =======================
+# 카드 입력: Enter로 저장 + 입력칸 초기화
+# (기존 세션상태(cards, study_cards, index, show_back, order)와 충돌 없음)
+# =======================
+def save_card_fast():
+    # st.text_input의 on_change에서 실행됨 (즉, '뒷면'에서 Enter)
+    cat = (st.session_state.get("input_category", "") or "").strip()
+    front = (st.session_state.get("input_front", "") or "").strip()
+    back = (st.session_state.get("input_back", "") or "").strip()
+
+    # 필수값 없으면 저장하지 않음 (입력 흐름 안 끊기게 경고도 안 띄움)
+    if not (cat and front and back):
+        return
+
+    # 이미지(선택) 업로드
+    front_file = st.session_state.get("input_front_image")
+    back_file = st.session_state.get("input_back_image")
+
+    front_img = upload_image(front_file, "front") if front_file else None
+    back_img = upload_image(back_file, "back") if back_file else None
+
+    # DB 저장 (네가 이미 쓰는 insert_card 시그니처 그대로)
+    insert_card(cat, front, back, front_img, back_img)
+
+    # ✅ 입력칸 초기화 (핵심)
+    st.session_state["input_front"] = ""
+    st.session_state["input_back"] = ""
+    st.session_state["input_front_image"] = None
+    st.session_state["input_back_image"] = None
+
+    # 스냅샷(암기 모드) 갱신되게
+    sync()
+    st.rerun()
 
 # =======================
 # 수동 백업
@@ -130,27 +163,45 @@ st.download_button(
 )
 
 # =======================
-# 1️⃣ 카드 입력
+# 1️⃣ 카드 입력 (앞면→뒷면 Enter로 저장)
 # =======================
 if page == "➕ 카드 입력":
-    st.subheader("카드 입력")
+    st.subheader("카드 입력 (앞면 → 뒷면 Enter로 저장)")
 
-    cat = st.text_input("카테고리")
-    front = st.text_input("앞면 (문제)")
-    back = st.text_input("뒷면 (정답)")
+    st.text_input(
+        "카테고리",
+        key="input_category",
+        placeholder="예: 전기전자, 교육과정"
+    )
 
-    front_file = st.file_uploader("앞면 이미지 (선택)", ["png", "jpg", "jpeg"])
-    back_file = st.file_uploader("뒷면 이미지 (선택)", ["png", "jpg", "jpeg"])
+    st.text_input(
+        "앞면 (문제)",
+        key="input_front",
+        placeholder="문제/용어/개념"
+    )
 
-    if st.button("➕ 카드 추가"):
-        if not (cat and front and back):
-            st.error("필수 항목을 입력하세요.")
-        else:
-            front_img = upload_image(front_file, "front")
-            back_img = upload_image(back_file, "back")
-            insert_card(cat, front, back, front_img, back_img)
-            sync()
-            st.success("카드 추가 완료")
+    # ✅ 여기서 Enter 누르면 자동 저장됨
+    st.text_input(
+        "뒷면 (정답) — Enter로 저장",
+        key="input_back",
+        placeholder="정답 입력 후 Enter",
+        on_change=save_card_fast
+    )
+
+    st.file_uploader(
+        "앞면 이미지 (선택)",
+        type=["png", "jpg", "jpeg"],
+        key="input_front_image"
+    )
+    st.file_uploader(
+        "뒷면 이미지 (선택)",
+        type=["png", "jpg", "jpeg"],
+        key="input_back_image"
+    )
+
+    st.caption("✅ Enter로 저장되며, 저장 후 입력칸/이미지는 자동 초기화됩니다.")
+    st.info(f"현재 카드 수: {len(st.session_state.cards)} 장")
+
 
 # =======================
 # 2️⃣ 암기 모드 (속도 최적화 핵심)
@@ -290,6 +341,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
