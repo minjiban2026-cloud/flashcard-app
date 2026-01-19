@@ -115,6 +115,15 @@ div[role="radiogroup"] label {
     margin-bottom: 18px;
 }
 
+.flashcard + img {
+    max-width: 360px;      /* 🔑 핵심: 이미지 최대 너비 */
+    width: 100%;
+    margin: 18px auto 0 auto;
+    display: block;
+    border-radius: 16px;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.08);
+}
+
 .progress {
     font-size: 12px;
     color: #9CA3AF;
@@ -360,7 +369,7 @@ elif page == "🧠 암기 모드":
     )
 
     if img:
-        st.image(img, use_column_width=True)
+        st.image(img, clamp=True)
 
     if enter_only:
         msg = st.chat_input("Enter")
