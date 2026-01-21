@@ -25,13 +25,12 @@ st.set_page_config(
 )
 
 # =======================
-# 🎨 프리미엄 앱 스타일
+# 🎨 UI 스타일 (수정 금지 영역)
 # =======================
 st.markdown("""
 <style>
-/* ===== 전체 ===== */
 .stApp {
-    background: radial-gradient(circle at top, #eef2ff 0%, #f8fafc 60%);
+    background: linear-gradient(180deg, #f9fafb 0%, #eef2ff 100%);
     font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
 }
 
@@ -41,87 +40,31 @@ st.markdown("""
     padding-bottom: 4rem;
 }
 
-/* ===== 헤더 ===== */
-.app-header {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 1.2rem;
-}
-
-.app-logo {
-    width: 56px;
-    height: 56px;
-    border-radius: 18px;
-    background: linear-gradient(135deg, #6366F1, #818CF8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 26px;
-    font-weight: 900;
-    box-shadow: 0 12px 30px rgba(99,102,241,0.45);
-    margin-bottom: 10px;
-}
-
+/* 헤더 */
 .app-title {
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 800;
-    color: #111827;
+    text-align: center;
+    margin-bottom: 1.5rem;
 }
 
-.app-sub {
-    font-size: 13px;
-    color: #6B7280;
-}
-
-/* ===== 메뉴 ===== */
-div[role="radiogroup"] label {
-    background: white;
-    padding: 8px 14px;
-    border-radius: 999px;
-    font-weight: 600;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.06);
-}
-
-/* ===== 설정 패널 ===== */
-.settings {
-    background: white;
-    border-radius: 22px;
-    padding: 18px;
-    box-shadow: 0 10px 28px rgba(0,0,0,0.08);
-    margin-bottom: 22px;
-}
-
-/* ===== 카드 ===== */
+/* 카드 */
 .flashcard {
     background: white;
-    padding: 52px 40px;
+    padding: 48px 36px;
     border-radius: 28px;
-    box-shadow:
-        0 30px 60px rgba(0,0,0,0.10),
-        inset 0 1px 0 rgba(255,255,255,0.8);
-    font-size: 24px;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.08);
+    font-size: 22px;
     line-height: 1.7;
     text-align: center;
-    animation: cardIn 0.35s ease;
+    white-space: pre-wrap;   /* ✅ 줄바꿈 가독성 핵심 */
 }
 
 .flashcard-label {
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.08em;
     color: #6366F1;
-    margin-bottom: 18px;
-}
-
-.flashcard + img {
-    max-width: 360px;      /* 🔑 핵심: 이미지 최대 너비 */
-    width: 100%;
-    margin: 18px auto 0 auto;
-    display: block;
-    border-radius: 16px;
-    box-shadow: 0 12px 24px rgba(0,0,0,0.08);
+    margin-bottom: 16px;
 }
 
 .progress {
@@ -131,29 +74,27 @@ div[role="radiogroup"] label {
     margin-bottom: 8px;
 }
 
-/* ===== 입력 ===== */
-input, textarea {
-    border-radius: 16px !important;
-    padding: 12px !important;
+/* 저장 버튼 (Primary Action) */
+div[data-testid="stFormSubmitButton"] > button {
+    background: linear-gradient(135deg, #6366F1, #818CF8);
+    color: white;
+    border-radius: 14px;
+    font-weight: 700;
+    padding: 10px 18px;
+    border: none;
 }
 
-/* ===== 버튼 ===== */
-button {
-    border-radius: 16px !important;
-    font-weight: 700 !important;
-    padding: 10px 16px !important;
+div[data-testid="stFormSubmitButton"] > button:hover {
+    opacity: 0.9;
 }
 
-/* ===== 애니메이션 ===== */
-@keyframes cardIn {
-    from {
-        opacity: 0;
-        transform: translateY(16px) scale(0.97);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-    }
+/* 이미지 크기 제한 */
+.flashcard + img {
+    max-width: 360px;
+    width: 100%;
+    margin: 18px auto 0 auto;
+    display: block;
+    border-radius: 16px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -245,20 +186,14 @@ def categories(cards):
     return sorted({c["category"] for c in cards})
 
 # =======================
-# 헤더
+# 헤더 & 메뉴
 # =======================
-st.markdown("""
-<div class="app-header">
-    <div class="app-logo">📘</div>
-    <div class="app-title">임용 대비 암기 카드</div>
-    <div class="app-sub">Focus · Repeat · Pass</div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', unsafe_allow_html=True)
 
 page = st.radio("", ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"], horizontal=True)
 
 # =======================
-# 카드 저장
+# 카드 저장 (form 대응)
 # =======================
 def save_card_fast():
     cat = (st.session_state.get("input_category") or "").strip()
@@ -276,70 +211,47 @@ def save_card_fast():
 
     insert_card(cat, front, back, front_img, back_img)
 
-    st.session_state["input_front"] = ""
-    st.session_state["input_back"] = ""
     st.session_state.upload_key += 1
-
     sync()
     st.rerun()
 
 # =======================
-# 카드 입력 (form 사용, 줄바꿈 안정 버전)
+# 1️⃣ 카드 입력 (form)
 # =======================
 if page == "➕ 카드 입력":
 
-    st.subheader("카드 입력")
+    with st.form("card_input_form", clear_on_submit=True):
 
-    with st.form("card_input_form", clear_on_submit=False):
-
-        # --- 기본 입력 ---
-        st.text_input(
-            "카테고리",
-            key="input_category",
-            placeholder="예: 전기전자"
-        )
-
-        st.text_input(
-            "앞면",
-            key="input_front",
-            placeholder="문제 또는 개념"
-        )
+        st.text_input("카테고리", key="input_category")
+        st.text_input("앞면", key="input_front")
 
         st.text_area(
             "뒷면 (줄바꿈 가능)",
             key="input_back",
             height=160,
-            placeholder="여러 줄 입력 가능 (Enter = 줄바꿈)"
+            placeholder="Enter = 줄바꿈"
         )
 
-        # --- 이미지 업로드 ---
         st.file_uploader(
             "앞면 이미지 (선택)",
-            ["png", "jpg", "jpeg"],
+            ["png","jpg","jpeg"],
             key=f"input_front_image_{st.session_state.upload_key}"
         )
-
         st.file_uploader(
             "뒷면 이미지 (선택)",
-            ["png", "jpg", "jpeg"],
+            ["png","jpg","jpeg"],
             key=f"input_back_image_{st.session_state.upload_key}"
         )
 
-        # --- 저장 버튼 ---
         submitted = st.form_submit_button("💾 저장")
 
-    # =======================
-    # form 제출 후 처리
-    # =======================
     if submitted:
         save_card_fast()
 
-    # --- 보조 정보 ---
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
 
-
 # =======================
-# 암기 모드
+# 2️⃣ 암기 모드 (줄바꿈 가독성 개선)
 # =======================
 elif page == "🧠 암기 모드":
 
@@ -353,32 +265,14 @@ elif page == "🧠 암기 모드":
         st.session_state.order = []
 
     cards = st.session_state.study_cards
-
-    st.markdown('<div class="settings">', unsafe_allow_html=True)
     cat = st.selectbox("카테고리", categories(cards))
-    c1, c2, c3 = st.columns(3)
-    with c1: random_mode = st.checkbox("랜덤")
-    with c2: wrong_only = st.checkbox("틀린 카드")
-    with c3: enter_only = st.checkbox("Enter 전용", value=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     base = [c for c in cards if c["category"] == cat]
-    if wrong_only:
-        base = [c for c in base if int(c["wrong_count"]) > 0]
     if not base:
         st.stop()
 
     ids = [c["id"] for c in base]
-
-    if random_mode:
-        if not st.session_state.order or set(st.session_state.order) != set(ids):
-            st.session_state.order = random.sample(ids, len(ids))
-            st.session_state.index = 0
-            st.session_state.show_back = False
-        order = st.session_state.order
-    else:
-        order = ids
-        st.session_state.order = []
+    order = ids
 
     cid = order[st.session_state.index % len(order)]
     card = next(c for c in base if c["id"] == cid)
@@ -387,10 +281,7 @@ elif page == "🧠 암기 모드":
     text = card["back"] if st.session_state.show_back else card["front"]
     img = card["back_image_url"] if st.session_state.show_back else card["front_image_url"]
 
-    st.markdown(
-        f'<div class="progress">{st.session_state.index+1} / {len(order)}</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="progress">{st.session_state.index+1} / {len(order)}</div>', unsafe_allow_html=True)
 
     st.markdown(
         f"""
@@ -403,64 +294,48 @@ elif page == "🧠 암기 모드":
     )
 
     if img:
-        st.image(img, clamp=True)
+        st.image(img)
 
-    if enter_only:
-        msg = st.chat_input("Enter")
-        if msg is not None:
-            if not st.session_state.show_back:
-                st.session_state.show_back = True
-            else:
-                st.session_state.show_back = False
-                st.session_state.index += 1
-    else:
+    msg = st.chat_input("Enter → 다음")
+    if msg is not None:
         if not st.session_state.show_back:
-            if st.button("정답 보기"):
-                st.session_state.show_back = True
+            st.session_state.show_back = True
         else:
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("맞음"):
-                    st.session_state.show_back = False
-                    st.session_state.index += 1
-            with c2:
-                if st.button("틀림"):
-                    increment_wrong(card["id"], int(card["wrong_count"]))
-                    st.session_state.show_back = False
-                    st.session_state.index += 1
-                    sync()
+            st.session_state.show_back = False
+            st.session_state.index += 1
 
 # =======================
-# 카드 관리
+# 3️⃣ 카드 관리 (줄바꿈 가능)
 # =======================
 elif page == "🛠️ 카드 관리":
 
     cat = st.selectbox("카테고리", categories(st.session_state.cards))
     cards = [c for c in st.session_state.cards if c["category"] == cat]
-    card = st.selectbox("카드", cards, format_func=lambda c: c["front"])
-
-    if card["front_image_url"]:
-        st.image(card["front_image_url"], width=200)
-    if card["back_image_url"]:
-        st.image(card["back_image_url"], width=200)
+    card = st.selectbox("카드 선택", cards, format_func=lambda c: c["front"])
 
     new_cat = st.text_input("카테고리", card["category"])
     new_front = st.text_input("앞면", card["front"])
-    new_back = st.text_input("뒷면", card["back"])
+
+    new_back = st.text_area(
+        "뒷면 (줄바꿈 가능)",
+        card["back"],
+        height=160
+    )
 
     front_file = st.file_uploader("앞면 이미지 교체", ["png","jpg","jpeg"])
     back_file = st.file_uploader("뒷면 이미지 교체", ["png","jpg","jpeg"])
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("저장"):
+        if st.button("💾 수정"):
             front_img = upload_image(front_file, "front") or card["front_image_url"]
             back_img = upload_image(back_file, "back") or card["back_image_url"]
             update_card(card["id"], new_cat, new_front, new_back, front_img, back_img)
             sync()
             st.success("수정 완료")
+
     with c2:
-        if st.button("삭제"):
+        if st.button("🗑️ 삭제"):
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
