@@ -90,11 +90,11 @@ div[data-testid="stFormSubmitButton"] > button:hover {
 
 /* 이미지 크기 제한 */
 .flashcard + img {
-    max-width: 360px;
+    max-width: 260px;
     width: 100%;
-    margin: 18px auto 0 auto;
+    margin: 14px auto 0 auto;
     display: block;
-    border-radius: 16px;
+    border-radius: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -410,6 +410,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
