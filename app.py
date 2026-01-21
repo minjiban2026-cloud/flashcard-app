@@ -90,11 +90,12 @@ div[data-testid="stFormSubmitButton"] > button:hover {
 
 /* 이미지 크기 제한 */
 .flashcard-image {
-    max-width: 260px;      /* ← 네가 원한 작은 이미지 */
-    width: 100%;
-    margin: 18px auto 0 auto;
+    width: 25%;          /* 카드 폭의 1/4 */
+    max-width: 140px;    /* 상한 */
+    min-width: 90px;     /* 하한 */
+    margin: 14px auto 0 auto;
     display: block;
-    border-radius: 14px;
+    border-radius: 10px;
 }
 
 .flashcard-text {
@@ -351,8 +352,6 @@ elif page == "🧠 암기 모드":
 )
 
 
-    if img:
-        st.image(img)
 
     # ── 컨트롤 영역
     if enter_only:
@@ -416,6 +415,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
