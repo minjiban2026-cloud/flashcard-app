@@ -289,7 +289,12 @@ def save_card_fast():
 if page == "➕ 카드 입력":
     st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
     st.text_input("앞면", key="input_front", placeholder="문제 또는 개념")
-    st.text_input("뒷면 (Enter 저장)", key="input_back", on_change=save_card_fast)
+    back_msg = st.chat_input("뒷면 입력 (Enter 저장 / Shift+Enter 줄바꿈)")
+
+if back_msg is not None:
+    st.session_state["input_back"] = back_msg
+    save_card_fast()
+
 
     st.file_uploader(
         "앞면 이미지",
@@ -430,6 +435,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
