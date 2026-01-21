@@ -164,6 +164,17 @@ def increment_wrong(card_id, current):
         "wrong_count": current + 1
     }).eq("id", card_id).execute()
 
+def reset_wrong(card_id):
+    supabase.table(TABLE).update({
+        "wrong_count": 0
+    }).eq("id", card_id).execute()
+
+def reset_wrong_by_category(category):
+    supabase.table(TABLE).update({
+        "wrong_count": 0
+    }).eq("category", category).execute()
+
+    
 # =======================
 # 세션 상태 (핵심 유지)
 # =======================
@@ -353,31 +364,47 @@ elif page == "🧠 암기 모드":
 
 
 
-    # ── 컨트롤 영역
-    if enter_only:
-        msg = st.chat_input("Enter → 문제 / 정답 / 다음 카드")
-        if msg is not None:
-            if not st.session_state.show_back:
-                st.session_state.show_back = True
-            else:
+# ── 컨트롤 영역
+if enter_only:
+    msg = st.chat_input("Enter → 문제 / 정답 / 다음 카드")
+    if msg is not None:
+        if not st.session_state.show_back:
+            st.session_state.show_back = True
+        else:
+            st.session_state.show_back = False
+            st.session_state.index += 1
+else:
+    if not st.session_state.show_back:
+        if st.button("정답 보기"):
+            st.session_state.show_back = True
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ 정답"):
                 st.session_state.show_back = False
                 st.session_state.index += 1
-    else:
-        if not st.session_state.show_back:
-            if st.button("정답 보기"):
-                st.session_state.show_back = True
-        else:
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("✅ 정답"):
-                    st.session_state.show_back = False
-                    st.session_state.index += 1
-            with c2:
-                if st.button("❌ 오답"):
-                    increment_wrong(card["id"], int(card["wrong_count"]))
-                    st.session_state.show_back = False
-                    st.session_state.index += 1
-                    sync()
+        with c2:
+            if st.button("❌ 오답"):
+                increment_wrong(card["id"], int(card["wrong_count"]))
+                st.session_state.show_back = False
+                st.session_state.index += 1
+                sync()
+
+        # 🔹 개별 카드 오답 제외 (⭐ 여기!)
+        if st.button("🧹 이 카드 오답 제외"):
+            reset_wrong(card["id"])
+            st.session_state.show_back = False
+            sync()
+
+
+# ── 오답 전체 리셋 (오답만 모드일 때만 표시)
+if wrong_only:
+    if st.button("🧹 이 카테고리 오답 전체 리셋"):
+        reset_wrong_by_category(cat)
+        sync()
+        st.success("이 카테고리의 오답이 모두 초기화되었습니다.")
+        st.stop()
+
 
 
 # =======================
@@ -415,6 +442,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
