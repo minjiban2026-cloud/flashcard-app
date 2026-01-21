@@ -216,14 +216,25 @@ def save_card_fast():
     st.rerun()
 
 # =======================
-# 1️⃣ 카드 입력 (form)
+# 1️⃣ 카드 입력 (카테고리 유지 버전)
 # =======================
 if page == "➕ 카드 입력":
 
+    # ✅ 카테고리는 form 밖 (유지됨)
+    st.text_input(
+        "카테고리",
+        key="input_category",
+        placeholder="예: 전기전자"
+    )
+
+    # 🔒 나머지는 form 안 (저장 시 초기화)
     with st.form("card_input_form", clear_on_submit=True):
 
-        st.text_input("카테고리", key="input_category")
-        st.text_input("앞면", key="input_front")
+        st.text_input(
+            "앞면",
+            key="input_front",
+            placeholder="문제 또는 개념"
+        )
 
         st.text_area(
             "뒷면 (줄바꿈 가능)",
@@ -234,12 +245,13 @@ if page == "➕ 카드 입력":
 
         st.file_uploader(
             "앞면 이미지 (선택)",
-            ["png","jpg","jpeg"],
+            ["png", "jpg", "jpeg"],
             key=f"input_front_image_{st.session_state.upload_key}"
         )
+
         st.file_uploader(
             "뒷면 이미지 (선택)",
-            ["png","jpg","jpeg"],
+            ["png", "jpg", "jpeg"],
             key=f"input_back_image_{st.session_state.upload_key}"
         )
 
@@ -249,6 +261,7 @@ if page == "➕ 카드 입력":
         save_card_fast()
 
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
+
 
 # =======================
 # 2️⃣ 암기 모드 (랜덤 / 오답 / 엔터온리 복구 + 확장)
@@ -397,6 +410,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
