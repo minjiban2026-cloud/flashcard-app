@@ -279,16 +279,13 @@ if page == "➕ 카드 입력":
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
 
 
-# =======================
-# 2️⃣ 암기 모드 (랜덤 / 오답 / 엔터온리 복구 + 확장)
-# =======================
 elif page == "🧠 암기 모드":
 
     if not st.session_state.cards:
         st.warning("카드가 없습니다.")
         st.stop()
 
-    # ── 암기 세션 초기화 (최초 진입 시 1회)
+    # ── 암기 세션 초기화
     if st.session_state.study_cards is None:
         st.session_state.study_cards = st.session_state.cards.copy()
         st.session_state.index = 0
@@ -326,7 +323,6 @@ elif page == "🧠 암기 모드":
             st.session_state.index = 0
             st.session_state.show_back = False
 
-        # 최초 랜덤 진입 시 자동 섞기
         if not st.session_state.order or set(st.session_state.order) != set(ids):
             st.session_state.order = random.sample(ids, len(ids))
             st.session_state.index = 0
@@ -352,60 +348,56 @@ elif page == "🧠 암기 모드":
     )
 
     st.markdown(
-    f"""
-    <div class="flashcard">
-        <div class="flashcard-label">{label}</div>
-        <div class="flashcard-text">{text}</div>
-        {"<img src='" + img + "' class='flashcard-image' />" if img else ""}
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+        f"""
+        <div class="flashcard">
+            <div class="flashcard-label">{label}</div>
+            <div class="flashcard-text">{text}</div>
+            {"<img src='" + img + "' class='flashcard-image' />" if img else ""}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
+    # ── 컨트롤 영역
+    if enter_only:
+        st.caption("⌨️ Enter 키를 눌러 진행합니다")
 
+        if st.button("▶️ 다음 (Enter 대체)", use_container_width=True):
+            if not st.session_state.show_back:
+                st.session_state.show_back = True
+            else:
+                st.session_state.show_back = False
+                st.session_state.index += 1
 
-# ── 컨트롤 영역
-if enter_only:
-    msg = st.chat_input("Enter → 문제 / 정답 / 다음 카드")
-    if msg is not None:
-        if not st.session_state.show_back:
-            st.session_state.show_back = True
-        else:
-            st.session_state.show_back = False
-            st.session_state.index += 1
-else:
-    if not st.session_state.show_back:
-        if st.button("정답 보기"):
-            st.session_state.show_back = True
     else:
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ 정답"):
+        if not st.session_state.show_back:
+            if st.button("정답 보기", use_container_width=True):
+                st.session_state.show_back = True
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ 정답"):
+                    st.session_state.show_back = False
+                    st.session_state.index += 1
+            with c2:
+                if st.button("❌ 오답"):
+                    increment_wrong(card["id"], int(card["wrong_count"]))
+                    st.session_state.show_back = False
+                    st.session_state.index += 1
+                    sync()
+
+            if st.button("🧹 이 카드 오답 제외"):
+                reset_wrong(card["id"])
                 st.session_state.show_back = False
-                st.session_state.index += 1
-        with c2:
-            if st.button("❌ 오답"):
-                increment_wrong(card["id"], int(card["wrong_count"]))
-                st.session_state.show_back = False
-                st.session_state.index += 1
                 sync()
 
-        # 🔹 개별 카드 오답 제외 (⭐ 여기!)
-        if st.button("🧹 이 카드 오답 제외"):
-            reset_wrong(card["id"])
-            st.session_state.show_back = False
+    # ── 오답 전체 리셋
+    if wrong_only:
+        if st.button("🧹 이 카테고리 오답 전체 리셋"):
+            reset_wrong_by_category(cat)
             sync()
-
-
-# ── 오답 전체 리셋 (오답만 모드일 때만 표시)
-if wrong_only:
-    if st.button("🧹 이 카테고리 오답 전체 리셋"):
-        reset_wrong_by_category(cat)
-        sync()
-        st.success("이 카테고리의 오답이 모두 초기화되었습니다.")
-        st.stop()
-
-
+            st.success("이 카테고리의 오답이 모두 초기화되었습니다.")
+            st.stop()
 
 # =======================
 # 3️⃣ 카드 관리 (줄바꿈 가능)
@@ -442,6 +434,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
