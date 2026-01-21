@@ -251,13 +251,15 @@ if page == "➕ 카드 입력":
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
 
 # =======================
-# 2️⃣ 암기 모드 (줄바꿈 가독성 개선)
+# 2️⃣ 암기 모드 (랜덤 / 오답 / 엔터온리 복구 + 확장)
 # =======================
 elif page == "🧠 암기 모드":
 
     if not st.session_state.cards:
+        st.warning("카드가 없습니다.")
         st.stop()
 
+    # ── 암기 세션 초기화 (최초 진입 시 1회)
     if st.session_state.study_cards is None:
         st.session_state.study_cards = st.session_state.cards.copy()
         st.session_state.index = 0
@@ -265,15 +267,48 @@ elif page == "🧠 암기 모드":
         st.session_state.order = []
 
     cards = st.session_state.study_cards
+
+    # ── 옵션 영역
     cat = st.selectbox("카테고리", categories(cards))
 
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        random_mode = st.checkbox("🔀 랜덤")
+    with c2:
+        wrong_only = st.checkbox("❗ 오답만")
+    with c3:
+        enter_only = st.checkbox("⌨️ 엔터 온리", value=True)
+
+    # ── 카드 필터링
     base = [c for c in cards if c["category"] == cat]
+    if wrong_only:
+        base = [c for c in base if int(c["wrong_count"]) > 0]
+
     if not base:
+        st.info("표시할 카드가 없습니다.")
         st.stop()
 
     ids = [c["id"] for c in base]
-    order = ids
 
+    # ── 랜덤 + 다시 섞기
+    if random_mode:
+        if st.button("🔄 다시 섞기"):
+            st.session_state.order = random.sample(ids, len(ids))
+            st.session_state.index = 0
+            st.session_state.show_back = False
+
+        # 최초 랜덤 진입 시 자동 섞기
+        if not st.session_state.order or set(st.session_state.order) != set(ids):
+            st.session_state.order = random.sample(ids, len(ids))
+            st.session_state.index = 0
+            st.session_state.show_back = False
+
+        order = st.session_state.order
+    else:
+        order = ids
+        st.session_state.order = []
+
+    # ── 현재 카드
     cid = order[st.session_state.index % len(order)]
     card = next(c for c in base if c["id"] == cid)
 
@@ -281,7 +316,11 @@ elif page == "🧠 암기 모드":
     text = card["back"] if st.session_state.show_back else card["front"]
     img = card["back_image_url"] if st.session_state.show_back else card["front_image_url"]
 
-    st.markdown(f'<div class="progress">{st.session_state.index+1} / {len(order)}</div>', unsafe_allow_html=True)
+    # ── 카드 UI
+    st.markdown(
+        f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         f"""
@@ -296,13 +335,32 @@ elif page == "🧠 암기 모드":
     if img:
         st.image(img)
 
-    msg = st.chat_input("Enter → 다음")
-    if msg is not None:
+    # ── 컨트롤 영역
+    if enter_only:
+        msg = st.chat_input("Enter → 문제 / 정답 / 다음 카드")
+        if msg is not None:
+            if not st.session_state.show_back:
+                st.session_state.show_back = True
+            else:
+                st.session_state.show_back = False
+                st.session_state.index += 1
+    else:
         if not st.session_state.show_back:
-            st.session_state.show_back = True
+            if st.button("정답 보기"):
+                st.session_state.show_back = True
         else:
-            st.session_state.show_back = False
-            st.session_state.index += 1
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ 정답"):
+                    st.session_state.show_back = False
+                    st.session_state.index += 1
+            with c2:
+                if st.button("❌ 오답"):
+                    increment_wrong(card["id"], int(card["wrong_count"]))
+                    st.session_state.show_back = False
+                    st.session_state.index += 1
+                    sync()
+
 
 # =======================
 # 3️⃣ 카드 관리 (줄바꿈 가능)
@@ -339,6 +397,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
