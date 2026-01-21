@@ -89,12 +89,16 @@ div[data-testid="stFormSubmitButton"] > button:hover {
 }
 
 /* 이미지 크기 제한 */
-.flashcard + img {
-    max-width: 260px;
+.flashcard-image {
+    max-width: 260px;      /* ← 네가 원한 작은 이미지 */
     width: 100%;
-    margin: 14px auto 0 auto;
+    margin: 18px auto 0 auto;
     display: block;
     border-radius: 14px;
+}
+
+.flashcard-text {
+    white-space: pre-wrap;  /* 줄바꿈 유지 */
 }
 </style>
 """, unsafe_allow_html=True)
@@ -336,14 +340,16 @@ elif page == "🧠 암기 모드":
     )
 
     st.markdown(
-        f"""
-        <div class="flashcard">
-            <div class="flashcard-label">{label}</div>
-            {text}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    f"""
+    <div class="flashcard">
+        <div class="flashcard-label">{label}</div>
+        <div class="flashcard-text">{text}</div>
+        {"<img src='" + img + "' class='flashcard-image' />" if img else ""}
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
     if img:
         st.image(img)
@@ -410,6 +416,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
