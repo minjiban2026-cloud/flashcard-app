@@ -284,30 +284,59 @@ def save_card_fast():
     st.rerun()
 
 # =======================
-# 카드 입력
+# 카드 입력 (form 사용, 줄바꿈 안정 버전)
 # =======================
 if page == "➕ 카드 입력":
-    st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
-    st.text_input("앞면", key="input_front", placeholder="문제 또는 개념")
-    back_msg = st.chat_input("뒷면 입력 (Enter 저장 / Shift+Enter 줄바꿈)")
 
-if back_msg is not None:
-    st.session_state["input_back"] = back_msg
-    save_card_fast()
+    st.subheader("카드 입력")
 
+    with st.form("card_input_form", clear_on_submit=False):
 
-    st.file_uploader(
-        "앞면 이미지",
-        ["png","jpg","jpeg"],
-        key=f"input_front_image_{st.session_state.upload_key}"
-    )
-    st.file_uploader(
-        "뒷면 이미지",
-        ["png","jpg","jpeg"],
-        key=f"input_back_image_{st.session_state.upload_key}"
-    )
+        # --- 기본 입력 ---
+        st.text_input(
+            "카테고리",
+            key="input_category",
+            placeholder="예: 전기전자"
+        )
 
+        st.text_input(
+            "앞면",
+            key="input_front",
+            placeholder="문제 또는 개념"
+        )
+
+        st.text_area(
+            "뒷면 (줄바꿈 가능)",
+            key="input_back",
+            height=160,
+            placeholder="여러 줄 입력 가능 (Enter = 줄바꿈)"
+        )
+
+        # --- 이미지 업로드 ---
+        st.file_uploader(
+            "앞면 이미지 (선택)",
+            ["png", "jpg", "jpeg"],
+            key=f"input_front_image_{st.session_state.upload_key}"
+        )
+
+        st.file_uploader(
+            "뒷면 이미지 (선택)",
+            ["png", "jpg", "jpeg"],
+            key=f"input_back_image_{st.session_state.upload_key}"
+        )
+
+        # --- 저장 버튼 ---
+        submitted = st.form_submit_button("💾 저장")
+
+    # =======================
+    # form 제출 후 처리
+    # =======================
+    if submitted:
+        save_card_fast()
+
+    # --- 보조 정보 ---
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
+
 
 # =======================
 # 암기 모드
@@ -435,6 +464,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
