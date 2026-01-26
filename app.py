@@ -126,13 +126,21 @@ def auto_backup():
 def upload_image(file, folder):
     if file is None:
         return None
-    filename = f"{folder}/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.name}"
-    supabase.storage.from_(IMAGE_BUCKET).upload(
-        filename,
-        file.getvalue(),
-        file_options={"content-type": file.type},
-    )
-    return supabase.storage.from_(IMAGE_BUCKET).get_public_url(filename)
+
+    try:
+        filename = f"{folder}/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{file.name}"
+
+        supabase.storage.from_(IMAGE_BUCKET).upload(
+            filename,
+            file.getvalue(),
+            file_options={"content-type": file.type},
+        )
+
+        return supabase.storage.from_(IMAGE_BUCKET).get_public_url(filename)
+
+    except Exception as e:
+        st.warning("⚠️ 이미지 업로드 실패 (Storage 설정을 확인하세요)")
+        return None
 
 def insert_card(category, front, back, front_img, back_img):
     supabase.table(TABLE).insert({
@@ -434,6 +442,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
