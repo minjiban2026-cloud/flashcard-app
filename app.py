@@ -1,6 +1,8 @@
 import streamlit as st
 import random
 import json
+import re
+import uuid
 from datetime import datetime
 from supabase import create_client
 
@@ -123,12 +125,21 @@ def auto_backup():
     except:
         pass
 
+def safe_filename(name: str) -> str:
+    """
+    Supabase Storage에서 허용되는 안전한 파일명으로 변환
+    (영문, 숫자, ., -, _ 만 허용)
+    """
+    name = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+    return name
+
 def upload_image(file, folder):
     if file is None:
         return None
 
     try:
-        filename = f"{folder}/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{file.name}"
+        safe_name = safe_filename(file.name)
+        filename = f"{folder}/{uuid.uuid4().hex}_{safe_name}"
 
         supabase.storage.from_(IMAGE_BUCKET).upload(
             filename,
@@ -138,9 +149,10 @@ def upload_image(file, folder):
 
         return supabase.storage.from_(IMAGE_BUCKET).get_public_url(filename)
 
-    except Exception as e:
-        st.warning("⚠️ 이미지 업로드 실패 (Storage 설정을 확인하세요)")
+    except Exception:
+        st.warning("⚠️ 이미지 업로드 실패 (파일명 또는 Storage 설정 문제)")
         return None
+
 
 def insert_card(category, front, back, front_img, back_img):
     supabase.table(TABLE).insert({
@@ -442,6 +454,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
