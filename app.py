@@ -53,21 +53,26 @@ st.markdown("""
 /* 카드 */
 .flashcard {
     background: white;
-    padding: 48px 36px;
+    padding: 36px 36px;          /* 🔽 위아래 패딩 줄임 */
     border-radius: 28px;
     box-shadow: 0 24px 48px rgba(0,0,0,0.08);
     font-size: 22px;
     line-height: 1.7;
     text-align: center;
-    white-space: pre-wrap;   /* ✅ 줄바꿈 가독성 핵심 */
+    white-space: pre-wrap;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;     /* 🔑 핵심: 수직 중심 끌어올림 */
 }
 
 .flashcard-label {
     font-size: 12px;
     font-weight: 700;
     color: #6366F1;
-    margin-bottom: 16px;
+    margin-bottom: 10px;   /* 🔽 기존보다 줄임 */
 }
+
 
 .progress {
     font-size: 12px;
@@ -454,6 +459,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
