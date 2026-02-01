@@ -322,7 +322,7 @@ elif page == "🧠 암기 모드":
     # ── 옵션 영역
     cat = st.selectbox("카테고리", categories(cards))
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         random_mode = st.checkbox("🔀 랜덤")
     with c2:
@@ -473,6 +473,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
