@@ -329,6 +329,10 @@ elif page == "🧠 암기 모드":
         wrong_only = st.checkbox("❗ 오답만")
     with c3:
         enter_only = st.checkbox("⌨️ 엔터 온리", value=True)
+    with c4:
+        recall_mode = st.checkbox("🧠 회상 모드")
+
+    st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
     # ── 카드 필터링
     base = [c for c in cards if c["category"] == cat]
@@ -362,9 +366,21 @@ elif page == "🧠 암기 모드":
     cid = order[st.session_state.index % len(order)]
     card = next(c for c in base if c["id"] == cid)
 
-    label = "정답" if st.session_state.show_back else "문제"
-    text = card["back"] if st.session_state.show_back else card["front"]
-    img = card["back_image_url"] if st.session_state.show_back else card["front_image_url"]
+if recall_mode:
+    # 회상 모드: 설명 → 개념
+    first_label, second_label = "설명", "개념"
+    first_text, second_text = card["back"], card["front"]
+    first_img, second_img = card["back_image_url"], card["front_image_url"]
+else:
+    # 기본 모드: 개념 → 설명
+    first_label, second_label = "문제", "정답"
+    first_text, second_text = card["front"], card["back"]
+    first_img, second_img = card["front_image_url"], card["back_image_url"]
+
+label = second_label if st.session_state.show_back else first_label
+text  = second_text  if st.session_state.show_back else first_text
+img   = second_img   if st.session_state.show_back else first_img
+
 
     # ── 카드 UI
     st.markdown(
@@ -459,6 +475,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
