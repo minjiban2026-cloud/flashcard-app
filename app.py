@@ -3,8 +3,10 @@ import random
 import json
 import re
 import uuid
+import httpx
 from datetime import datetime
 from supabase import create_client
+from postgrest.exceptions import APIError
 
 # =======================
 # Supabase 연결
@@ -53,7 +55,7 @@ st.markdown("""
 /* 카드 */
 .flashcard {
     background: white;
-    padding: 36px 36px;          /* 🔽 위아래 패딩 줄임 */
+    padding: 36px 36px;
     border-radius: 28px;
     box-shadow: 0 24px 48px rgba(0,0,0,0.08);
     font-size: 22px;
@@ -63,16 +65,15 @@ st.markdown("""
 
     display: flex;
     flex-direction: column;
-    justify-content: center;     /* 🔑 핵심: 수직 중심 끌어올림 */
+    justify-content: center;
 }
 
 .flashcard-label {
     font-size: 12px;
     font-weight: 700;
     color: #6366F1;
-    margin-bottom: 10px;   /* 🔽 기존보다 줄임 */
+    margin-bottom: 10px;
 }
-
 
 .progress {
     font-size: 12px;
@@ -90,23 +91,22 @@ div[data-testid="stFormSubmitButton"] > button {
     padding: 10px 18px;
     border: none;
 }
-
 div[data-testid="stFormSubmitButton"] > button:hover {
     opacity: 0.9;
 }
 
 /* 이미지 크기 제한 */
 .flashcard-image {
-    width: 25%;          /* 카드 폭의 1/4 */
-    max-width: 140px;    /* 상한 */
-    min-width: 90px;     /* 하한 */
+    width: 25%;
+    max-width: 140px;
+    min-width: 90px;
     margin: 14px auto 0 auto;
     display: block;
     border-radius: 10px;
 }
 
 .flashcard-text {
-    white-space: pre-wrap;  /* 줄바꿈 유지 */
+    white-space: pre-wrap;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -116,6 +116,16 @@ div[data-testid="stFormSubmitButton"] > button:hover {
 # =======================
 def fetch_cards():
     return supabase.table(TABLE).select("*").order("created_at").execute().data or []
+
+def fetch_cards_safe():
+    """
+    Supabase가 Paused/기동 중/네트워크 문제여도 앱이 죽지 않게
+    실패 시 None 반환
+    """
+    try:
+        return fetch_cards()
+    except (httpx.ConnectError, APIError, Exception):
+        return None
 
 def auto_backup():
     try:
@@ -131,17 +141,12 @@ def auto_backup():
         pass
 
 def safe_filename(name: str) -> str:
-    """
-    Supabase Storage에서 허용되는 안전한 파일명으로 변환
-    (영문, 숫자, ., -, _ 만 허용)
-    """
-    name = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
-    return name
+    """Supabase Storage에서 허용되는 안전한 파일명으로 변환 (영문/숫자/._- 만 허용)"""
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 def upload_image(file, folder):
     if file is None:
         return None
-
     try:
         safe_name = safe_filename(file.name)
         filename = f"{folder}/{uuid.uuid4().hex}_{safe_name}"
@@ -151,13 +156,10 @@ def upload_image(file, folder):
             file.getvalue(),
             file_options={"content-type": file.type},
         )
-
         return supabase.storage.from_(IMAGE_BUCKET).get_public_url(filename)
-
     except Exception:
         st.warning("⚠️ 이미지 업로드 실패 (파일명 또는 Storage 설정 문제)")
         return None
-
 
 def insert_card(category, front, back, front_img, back_img):
     supabase.table(TABLE).insert({
@@ -185,26 +187,25 @@ def delete_card(card_id):
     auto_backup()
 
 def increment_wrong(card_id, current):
-    supabase.table(TABLE).update({
-        "wrong_count": current + 1
-    }).eq("id", card_id).execute()
+    supabase.table(TABLE).update({"wrong_count": current + 1}).eq("id", card_id).execute()
 
 def reset_wrong(card_id):
-    supabase.table(TABLE).update({
-        "wrong_count": 0
-    }).eq("id", card_id).execute()
+    supabase.table(TABLE).update({"wrong_count": 0}).eq("id", card_id).execute()
 
 def reset_wrong_by_category(category):
-    supabase.table(TABLE).update({
-        "wrong_count": 0
-    }).eq("category", category).execute()
+    supabase.table(TABLE).update({"wrong_count": 0}).eq("category", category).execute()
 
-    
 # =======================
 # 세션 상태 (핵심 유지)
 # =======================
 if "cards" not in st.session_state:
-    st.session_state.cards = fetch_cards()
+    data = fetch_cards_safe()
+    st.session_state.cards = data if data is not None else []
+    st.session_state.supabase_ok = (data is not None)
+
+if "supabase_ok" not in st.session_state:
+    st.session_state.supabase_ok = True
+
 if "study_cards" not in st.session_state:
     st.session_state.study_cards = None
 if "index" not in st.session_state:
@@ -220,17 +221,37 @@ if "upload_key" not in st.session_state:
 # 공통
 # =======================
 def sync():
-    st.session_state.cards = fetch_cards()
+    data = fetch_cards_safe()
+    if data is None:
+        st.session_state.supabase_ok = False
+        st.session_state.cards = []
+        st.session_state.study_cards = None
+        return
+    st.session_state.cards = data
     st.session_state.study_cards = None
+    st.session_state.supabase_ok = True
 
 def categories(cards):
     return sorted({c["category"] for c in cards})
 
 # =======================
-# 헤더 & 메뉴
+# 헤더 & Supabase 연결 실패 방어막
 # =======================
 st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', unsafe_allow_html=True)
 
+if not st.session_state.supabase_ok:
+    st.error("⚠️ Supabase 프로젝트가 잠들어 있거나(Paused), 깨는 중이거나 네트워크 문제로 연결에 실패했습니다.\n\nSupabase에서 Resume 후 아래 버튼을 눌러주세요.")
+    if st.button("🔄 다시 시도"):
+        data = fetch_cards_safe()
+        if data is not None:
+            st.session_state.cards = data
+            st.session_state.supabase_ok = True
+        st.rerun()
+    st.stop()
+
+# =======================
+# 메뉴
+# =======================
 page = st.radio("", ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"], horizontal=True)
 
 # =======================
@@ -257,44 +278,20 @@ def save_card_fast():
     st.rerun()
 
 # =======================
-# 1️⃣ 카드 입력 (카테고리 유지 버전)
+# 1️⃣ 카드 입력 (카테고리 유지)
 # =======================
 if page == "➕ 카드 입력":
 
-    # ✅ 카테고리는 form 밖 (유지됨)
-    st.text_input(
-        "카테고리",
-        key="input_category",
-        placeholder="예: 전기전자"
-    )
+    st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
 
-    # 🔒 나머지는 form 안 (저장 시 초기화)
     with st.form("card_input_form", clear_on_submit=True):
+        st.text_input("앞면", key="input_front", placeholder="문제 또는 개념")
+        st.text_area("뒷면 (줄바꿈 가능)", key="input_back", height=160, placeholder="Enter = 줄바꿈")
 
-        st.text_input(
-            "앞면",
-            key="input_front",
-            placeholder="문제 또는 개념"
-        )
-
-        st.text_area(
-            "뒷면 (줄바꿈 가능)",
-            key="input_back",
-            height=160,
-            placeholder="Enter = 줄바꿈"
-        )
-
-        st.file_uploader(
-            "앞면 이미지 (선택)",
-            ["png", "jpg", "jpeg"],
-            key=f"input_front_image_{st.session_state.upload_key}"
-        )
-
-        st.file_uploader(
-            "뒷면 이미지 (선택)",
-            ["png", "jpg", "jpeg"],
-            key=f"input_back_image_{st.session_state.upload_key}"
-        )
+        st.file_uploader("앞면 이미지 (선택)", ["png", "jpg", "jpeg"],
+                         key=f"input_front_image_{st.session_state.upload_key}")
+        st.file_uploader("뒷면 이미지 (선택)", ["png", "jpg", "jpeg"],
+                         key=f"input_back_image_{st.session_state.upload_key}")
 
         submitted = st.form_submit_button("💾 저장")
 
@@ -303,14 +300,15 @@ if page == "➕ 카드 입력":
 
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
 
-
+# =======================
+# 2️⃣ 암기 모드
+# =======================
 elif page == "🧠 암기 모드":
 
     if not st.session_state.cards:
         st.warning("카드가 없습니다.")
         st.stop()
 
-    # ── 암기 세션 초기화
     if st.session_state.study_cards is None:
         st.session_state.study_cards = st.session_state.cards.copy()
         st.session_state.index = 0
@@ -319,7 +317,6 @@ elif page == "🧠 암기 모드":
 
     cards = st.session_state.study_cards
 
-    # ── 옵션 영역
     cat = st.selectbox("카테고리", categories(cards))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -334,7 +331,6 @@ elif page == "🧠 암기 모드":
 
     st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
-    # ── 카드 필터링
     base = [c for c in cards if c["category"] == cat]
     if wrong_only:
         base = [c for c in base if int(c["wrong_count"]) > 0]
@@ -345,7 +341,6 @@ elif page == "🧠 암기 모드":
 
     ids = [c["id"] for c in base]
 
-    # ── 랜덤 + 다시 섞기
     if random_mode:
         if st.button("🔄 다시 섞기"):
             st.session_state.order = random.sample(ids, len(ids))
@@ -362,7 +357,6 @@ elif page == "🧠 암기 모드":
         order = ids
         st.session_state.order = []
 
-    # ── 현재 카드
     cid = order[st.session_state.index % len(order)]
     card = next(c for c in base if c["id"] == cid)
 
@@ -376,15 +370,11 @@ elif page == "🧠 암기 모드":
         first_img, second_img = card["front_image_url"], card["back_image_url"]
 
     label = second_label if st.session_state.show_back else first_label
-    text  = second_text  if st.session_state.show_back else first_text
-    img   = second_img   if st.session_state.show_back else first_img
+    text = second_text if st.session_state.show_back else first_text
+    img = second_img if st.session_state.show_back else first_img
 
-
-    # ── 카드 UI
-    st.markdown(
-        f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
+                unsafe_allow_html=True)
 
     st.markdown(
         f"""
@@ -397,28 +387,25 @@ elif page == "🧠 암기 모드":
         unsafe_allow_html=True
     )
 
-    # ── 컨트롤 영역
     if enter_only:
         st.caption("⌨️ Enter 키를 눌러 진행합니다")
-
         if st.button("▶️ 다음 (Enter 대체)", use_container_width=True):
             if not st.session_state.show_back:
                 st.session_state.show_back = True
             else:
                 st.session_state.show_back = False
                 st.session_state.index += 1
-
     else:
         if not st.session_state.show_back:
             if st.button("정답 보기", use_container_width=True):
                 st.session_state.show_back = True
         else:
-            c1, c2 = st.columns(2)
-            with c1:
+            cc1, cc2 = st.columns(2)
+            with cc1:
                 if st.button("✅ 정답"):
                     st.session_state.show_back = False
                     st.session_state.index += 1
-            with c2:
+            with cc2:
                 if st.button("❌ 오답"):
                     increment_wrong(card["id"], int(card["wrong_count"]))
                     st.session_state.show_back = False
@@ -430,7 +417,6 @@ elif page == "🧠 암기 모드":
                 st.session_state.show_back = False
                 sync()
 
-    # ── 오답 전체 리셋
     if wrong_only:
         if st.button("🧹 이 카테고리 오답 전체 리셋"):
             reset_wrong_by_category(cat)
@@ -439,7 +425,7 @@ elif page == "🧠 암기 모드":
             st.stop()
 
 # =======================
-# 3️⃣ 카드 관리 (줄바꿈 가능)
+# 3️⃣ 카드 관리
 # =======================
 elif page == "🛠️ 카드 관리":
 
@@ -449,15 +435,10 @@ elif page == "🛠️ 카드 관리":
 
     new_cat = st.text_input("카테고리", card["category"])
     new_front = st.text_input("앞면", card["front"])
+    new_back = st.text_area("뒷면 (줄바꿈 가능)", card["back"], height=160)
 
-    new_back = st.text_area(
-        "뒷면 (줄바꿈 가능)",
-        card["back"],
-        height=160
-    )
-
-    front_file = st.file_uploader("앞면 이미지 교체", ["png","jpg","jpeg"])
-    back_file = st.file_uploader("뒷면 이미지 교체", ["png","jpg","jpeg"])
+    front_file = st.file_uploader("앞면 이미지 교체", ["png", "jpg", "jpeg"])
+    back_file = st.file_uploader("뒷면 이미지 교체", ["png", "jpg", "jpeg"])
 
     c1, c2 = st.columns(2)
     with c1:
@@ -473,6 +454,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
