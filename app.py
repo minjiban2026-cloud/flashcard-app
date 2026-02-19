@@ -140,6 +140,20 @@ def auto_backup():
     except:
         pass
 
+def manual_backup_now():
+    try:
+        cards = fetch_cards()
+        content = json.dumps(cards, ensure_ascii=False, indent=2)
+        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}_manual.json"
+        supabase.storage.from_(BACKUP_BUCKET).upload(
+            filename,
+            content.encode("utf-8"),
+            file_options={"content-type": "application/json"},
+        )
+        return True
+    except:
+        return False
+
 def safe_filename(name: str) -> str:
     """Supabase Storage에서 허용되는 안전한 파일명으로 변환 (영문/숫자/._- 만 허용)"""
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
@@ -162,38 +176,153 @@ def upload_image(file, folder):
         return None
 
 def insert_card(category, front, back, front_img, back_img):
-    supabase.table(TABLE).insert({
-        "category": category,
-        "front": front,
-        "back": back,
-        "front_image_url": front_img,
-        "back_image_url": back_img,
-        "wrong_count": 0
-    }).execute()
-    auto_backup()
+    try:
+        supabase.table(TABLE).insert({
+            "category": category,
+            "front": front,
+            "back": back,
+            "front_image_url": front_img,
+            "back_image_url": back_img,
+            "wrong_count": 0
+        }).execute()
+        auto_backup()
+        return True
+    except Exception:
+        st.error("⚠️ 카드 저장에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+        return False
 
 def update_card(card_id, category, front, back, front_img, back_img):
-    supabase.table(TABLE).update({
-        "category": category,
-        "front": front,
-        "back": back,
-        "front_image_url": front_img,
-        "back_image_url": back_img,
-    }).eq("id", card_id).execute()
-    auto_backup()
+    try:
+        supabase.table(TABLE).update({
+            "category": category,
+            "front": front,
+            "back": back,
+            "front_image_url": front_img,
+            "back_image_url": back_img,
+        }).eq("id", card_id).execute()
+        auto_backup()
+        return True
+    except Exception:
+        st.error("⚠️ 카드 수정에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+        return False
 
 def delete_card(card_id):
-    supabase.table(TABLE).delete().eq("id", card_id).execute()
-    auto_backup()
+    try:
+        supabase.table(TABLE).delete().eq("id", card_id).execute()
+        auto_backup()
+        return True
+    except Exception:
+        st.error("⚠️ 카드 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+        return False
 
 def increment_wrong(card_id, current):
-    supabase.table(TABLE).update({"wrong_count": current + 1}).eq("id", card_id).execute()
+    try:
+        supabase.table(TABLE).update({"wrong_count": int(current) + 1}).eq("id", card_id).execute()
+    except Exception:
+        st.warning("⚠️ 오답 카운트 반영 실패 (네트워크/DB 상태 확인)")
 
 def reset_wrong(card_id):
-    supabase.table(TABLE).update({"wrong_count": 0}).eq("id", card_id).execute()
+    try:
+        supabase.table(TABLE).update({"wrong_count": 0}).eq("id", card_id).execute()
+    except Exception:
+        st.warning("⚠️ 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
 def reset_wrong_by_category(category):
-    supabase.table(TABLE).update({"wrong_count": 0}).eq("category", category).execute()
+    try:
+        supabase.table(TABLE).update({"wrong_count": 0}).eq("category", category).execute()
+    except Exception:
+        st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
+
+def list_backups(limit=30):
+    """
+    Storage 버킷에서 백업 파일 목록을 가져옴.
+    (폴더 없이 루트에 올린다는 전제)
+    """
+    try:
+        items = supabase.storage.from_(BACKUP_BUCKET).list(path="")
+        # items: [{"name": "...", "updated_at": "...", ...}, ...]
+        names = []
+        for it in items or []:
+            nm = it.get("name")
+            if nm and nm.lower().endswith(".json") and nm.startswith("backup_"):
+                names.append(nm)
+        names.sort(reverse=True)  # 파일명에 시간 포함 → 역정렬 = 최신 우선
+        return names[:limit]
+    except Exception:
+        return []
+
+def download_backup_json(filename: str):
+    """
+    지정 백업 파일을 다운로드해서 JSON(list)을 반환. 실패 시 None
+    """
+    try:
+        data = supabase.storage.from_(BACKUP_BUCKET).download(filename)
+        # supabase-py 버전에 따라 bytes 또는 file-like일 수 있음
+        if hasattr(data, "read"):
+            raw = data.read()
+        else:
+            raw = data
+        obj = json.loads(raw.decode("utf-8"))
+        if isinstance(obj, list):
+            return obj
+        return None
+    except Exception:
+        return None
+
+def restore_from_backup(filename: str):
+    """
+    백업으로 DB 전체 복구:
+    1) 현재 DB에서 모든 카드 id를 가져와 batch delete
+    2) 백업 JSON을 batch insert
+    실패 시 False
+    """
+    backup_cards = download_backup_json(filename)
+    if backup_cards is None:
+        st.error("⚠️ 백업 파일을 읽을 수 없습니다. (형식/권한/파일 손상)")
+        return False
+
+    # 최소 필드 검증(너무 엄격하게 하면 복구가 막혀서, 필수만 확인)
+    cleaned = []
+    for c in backup_cards:
+        if not isinstance(c, dict):
+            continue
+        # 필수 키: category/front/back (DB 스키마에 맞춰)
+        if "category" not in c or "front" not in c or "back" not in c:
+            continue
+        cleaned.append(c)
+
+    # 백업이 비어있으면 오히려 위험 → 막기
+    if not cleaned:
+        st.error("⚠️ 백업 데이터가 비어있거나 유효한 카드가 없습니다. 복구를 중단했습니다.")
+        return False
+
+    try:
+        # 1) 현재 데이터 전체 삭제(안전: id 목록 기반 batch delete)
+        current = fetch_cards_safe()
+        if current is None:
+            st.error("⚠️ 현재 DB를 읽지 못했습니다. (Supabase 상태 확인)")
+            return False
+
+        ids = [c.get("id") for c in current if c.get("id") is not None]
+        # id가 없거나 이미 비어있으면 스킵
+        if ids:
+            chunk = 200
+            for i in range(0, len(ids), chunk):
+                batch = ids[i:i+chunk]
+                supabase.table(TABLE).delete().in_("id", batch).execute()
+
+        # 2) 백업 데이터 insert (batch)
+        chunk2 = 200
+        for i in range(0, len(cleaned), chunk2):
+            batch = cleaned[i:i+chunk2]
+            supabase.table(TABLE).insert(batch).execute()
+
+        auto_backup()  # 복구 직후 상태도 다시 백업
+        return True
+
+    except Exception:
+        st.error("⚠️ 복구 중 오류가 발생했습니다. (RLS/권한/DB 스키마/네트워크 확인)")
+        return False
 
 # =======================
 # 세션 상태 (핵심 유지)
@@ -217,6 +346,10 @@ if "order" not in st.session_state:
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
 
+# (추가) 암기모드 필터 변경 감지용
+if "study_filter_sig" not in st.session_state:
+    st.session_state.study_filter_sig = None
+
 # =======================
 # 공통
 # =======================
@@ -232,7 +365,7 @@ def sync():
     st.session_state.supabase_ok = True
 
 def categories(cards):
-    return sorted({c["category"] for c in cards})
+    return sorted({c["category"] for c in cards if c.get("category") is not None})
 
 # =======================
 # 헤더 & Supabase 연결 실패 방어막
@@ -262,7 +395,9 @@ def save_card_fast():
     front = (st.session_state.get("input_front") or "").strip()
     back = (st.session_state.get("input_back") or "").strip()
 
+    # ✅ 원래처럼: 뒷면 텍스트가 없으면 저장 불가
     if not (cat and front and back):
+        st.warning("카테고리/앞면/뒷면을 모두 입력해야 저장됩니다.")
         return
 
     front_file = st.session_state.get(f"input_front_image_{st.session_state.upload_key}")
@@ -271,9 +406,15 @@ def save_card_fast():
     front_img = upload_image(front_file, "front") if front_file else None
     back_img = upload_image(back_file, "back") if back_file else None
 
-    insert_card(cat, front, back, front_img, back_img)
+    ok = insert_card(cat, front, back, front_img, back_img)
+    if not ok:
+        return
 
+    # 업로더 리셋 + 입력창 정리(카테고리는 유지)
     st.session_state.upload_key += 1
+    st.session_state.input_front = ""
+    st.session_state.input_back = ""
+
     sync()
     st.rerun()
 
@@ -284,7 +425,8 @@ if page == "➕ 카드 입력":
 
     st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
 
-    with st.form("card_input_form", clear_on_submit=True):
+    # ✅ 이미지/텍스트 사라짐 방지: clear_on_submit=False + on_click 저장
+    with st.form("card_input_form", clear_on_submit=False):
         st.text_input("앞면", key="input_front", placeholder="문제 또는 개념")
         st.text_area("뒷면 (줄바꿈 가능)", key="input_back", height=160, placeholder="Enter = 줄바꿈")
 
@@ -293,10 +435,7 @@ if page == "➕ 카드 입력":
         st.file_uploader("뒷면 이미지 (선택)", ["png", "jpg", "jpeg"],
                          key=f"input_back_image_{st.session_state.upload_key}")
 
-        submitted = st.form_submit_button("💾 저장")
-
-    if submitted:
-        save_card_fast()
+        st.form_submit_button("💾 저장", on_click=save_card_fast)
 
     st.caption(f"📚 카드 수 {len(st.session_state.cards)}")
 
@@ -317,7 +456,12 @@ elif page == "🧠 암기 모드":
 
     cards = st.session_state.study_cards
 
-    cat = st.selectbox("카테고리", categories(cards))
+    cat_list = categories(cards)
+    if not cat_list:
+        st.warning("카테고리가 없습니다. 카드 입력에서 카테고리를 먼저 추가하세요.")
+        st.stop()
+
+    cat = st.selectbox("카테고리", cat_list)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -328,31 +472,47 @@ elif page == "🧠 암기 모드":
         enter_only = st.checkbox("⌨️ 엔터 온리", value=True)
     with c4:
         recall_mode = st.checkbox("🧠 회상 모드")
+
+    st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
+
     # =======================
-    # 🔎 검색(필터) - 추가
+    # 🔎 검색(필터)
     # =======================
     q = st.text_input(
         "🔎 검색",
         key="study_search_q",
         placeholder="앞면/뒷면에서 키워드로 찾기 (예: CRC, 오스테나이트, 서브넷)",
     ).strip().lower()
-    st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
-    base = [c for c in cards if c["category"] == cat]
+    # ✅ 필터 변경 시 흐름 꼬임 방지: index/order/show_back 자동 리셋
+    filter_sig = (cat, bool(random_mode), bool(wrong_only), bool(enter_only), bool(recall_mode), q)
+    if st.session_state.study_filter_sig is None:
+        st.session_state.study_filter_sig = filter_sig
+    elif st.session_state.study_filter_sig != filter_sig:
+        st.session_state.study_filter_sig = filter_sig
+        st.session_state.index = 0
+        st.session_state.show_back = False
+        st.session_state.order = []
+
+    base = [c for c in cards if c.get("category") == cat]
     if wrong_only:
-        base = [c for c in base if int(c["wrong_count"]) > 0]
-        
+        base = [c for c in base if int(c.get("wrong_count") or 0) > 0]
+
     # ✅ 검색어 필터 (앞면/뒷면 포함)
     if q:
         base = [
             c for c in base
             if (q in (c.get("front") or "").lower()) or (q in (c.get("back") or "").lower())
         ]
+
     if not base:
         st.info("표시할 카드가 없습니다." if not q else "검색 결과가 없습니다. 다른 키워드로 시도해보세요.")
         st.stop()
 
-    ids = [c["id"] for c in base]
+    ids = [c["id"] for c in base if c.get("id") is not None]
+    if not ids:
+        st.info("표시할 카드가 없습니다.")
+        st.stop()
 
     if random_mode:
         if st.button("🔄 다시 섞기"):
@@ -370,24 +530,34 @@ elif page == "🧠 암기 모드":
         order = ids
         st.session_state.order = []
 
+    st.session_state.index = st.session_state.index % max(len(order), 1)
+
     cid = order[st.session_state.index % len(order)]
-    card = next(c for c in base if c["id"] == cid)
+    try:
+        card = next(c for c in base if c["id"] == cid)
+    except StopIteration:
+        st.session_state.index = 0
+        st.session_state.show_back = False
+        st.session_state.order = []
+        st.rerun()
 
     if recall_mode:
         first_label, second_label = "설명", "개념"
-        first_text, second_text = card["back"], card["front"]
-        first_img, second_img = card["back_image_url"], card["front_image_url"]
+        first_text, second_text = card.get("back") or "", card.get("front") or ""
+        first_img, second_img = card.get("back_image_url"), card.get("front_image_url")
     else:
         first_label, second_label = "문제", "정답"
-        first_text, second_text = card["front"], card["back"]
-        first_img, second_img = card["front_image_url"], card["back_image_url"]
+        first_text, second_text = card.get("front") or "", card.get("back") or ""
+        first_img, second_img = card.get("front_image_url"), card.get("back_image_url")
 
     label = second_label if st.session_state.show_back else first_label
     text = second_text if st.session_state.show_back else first_text
     img = second_img if st.session_state.show_back else first_img
 
-    st.markdown(f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
-                unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         f"""
@@ -420,7 +590,7 @@ elif page == "🧠 암기 모드":
                     st.session_state.index += 1
             with cc2:
                 if st.button("❌ 오답"):
-                    increment_wrong(card["id"], int(card["wrong_count"]))
+                    increment_wrong(card["id"], int(card.get("wrong_count") or 0))
                     st.session_state.show_back = False
                     st.session_state.index += 1
                     sync()
@@ -442,28 +612,40 @@ elif page == "🧠 암기 모드":
 # =======================
 elif page == "🛠️ 카드 관리":
 
-    cat = st.selectbox("카테고리", categories(st.session_state.cards))
-    cards = [c for c in st.session_state.cards if c["category"] == cat]
-    card = st.selectbox("카드 선택", cards, format_func=lambda c: c["front"])
+    # ✅ 카드 0장 가드
+    if not st.session_state.cards:
+        st.warning("카드가 없습니다. 먼저 카드 입력에서 카드를 추가하세요.")
+        st.stop()
 
-    # ✅ 현재 이미지 상태 확인/미리보기 (추가)
+    cat_list = categories(st.session_state.cards)
+    if not cat_list:
+        st.warning("카테고리가 없습니다. 카드 입력에서 카테고리를 먼저 추가하세요.")
+        st.stop()
+
+    cat = st.selectbox("카테고리", cat_list)
+    cards = [c for c in st.session_state.cards if c.get("category") == cat]
+
+    if not cards:
+        st.info("이 카테고리에 카드가 없습니다.")
+        st.stop()
+
+    card = st.selectbox("카드 선택", cards, format_func=lambda c: (c.get("front") or "(앞면 없음)"))
+
+    # ✅ 현재 이미지 상태 확인/미리보기
     st.markdown("### 🖼️ 현재 등록된 이미지")
-
     p1, p2 = st.columns(2)
-
     with p1:
         st.caption(f"앞면 이미지: {'✅ 있음' if card.get('front_image_url') else '❌ 없음'}")
         if card.get("front_image_url"):
             st.image(card["front_image_url"], use_container_width=True)
-
     with p2:
         st.caption(f"뒷면 이미지: {'✅ 있음' if card.get('back_image_url') else '❌ 없음'}")
         if card.get("back_image_url"):
             st.image(card["back_image_url"], use_container_width=True)
 
-    new_cat = st.text_input("카테고리", card["category"])
-    new_front = st.text_input("앞면", card["front"])
-    new_back = st.text_area("뒷면 (줄바꿈 가능)", card["back"], height=160)
+    new_cat = st.text_input("카테고리", card.get("category") or "")
+    new_front = st.text_input("앞면", card.get("front") or "")
+    new_back = st.text_area("뒷면 (줄바꿈 가능)", card.get("back") or "", height=160)
 
     front_file = st.file_uploader("앞면 이미지 교체", ["png", "jpg", "jpeg"])
     back_file = st.file_uploader("뒷면 이미지 교체", ["png", "jpg", "jpeg"])
@@ -471,18 +653,67 @@ elif page == "🛠️ 카드 관리":
     c1, c2 = st.columns(2)
     with c1:
         if st.button("💾 수정"):
-            front_img = upload_image(front_file, "front") or card["front_image_url"]
-            back_img = upload_image(back_file, "back") or card["back_image_url"]
-            update_card(card["id"], new_cat, new_front, new_back, front_img, back_img)
-            sync()
-            st.success("수정 완료")
+            front_img = upload_image(front_file, "front") or card.get("front_image_url")
+            back_img = upload_image(back_file, "back") or card.get("back_image_url")
+            ok = update_card(card["id"], new_cat, new_front, new_back, front_img, back_img)
+            if ok:
+                sync()
+                st.success("수정 완료")
 
     with c2:
         if st.button("🗑️ 삭제"):
-            delete_card(card["id"])
-            sync()
-            st.success("삭제 완료")
+            ok = delete_card(card["id"])
+            if ok:
+                sync()
+                st.success("삭제 완료")
 
+    # =======================
+    # ♻️ 백업 복구 UI (추가)
+    # =======================
+    st.markdown("---")
+    with st.expander("♻️ 백업 복구 (전체 덮어쓰기)", expanded=False):
+        st.caption("⚠️ 선택한 백업으로 DB의 카드가 **전체 교체**됩니다. (현재 데이터는 삭제 후 백업 데이터로 복원)")
+
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("📦 지금 상태 수동 백업 만들기"):
+                ok = manual_backup_now()
+                if ok:
+                    st.success("수동 백업 생성 완료")
+                else:
+                    st.error("수동 백업 생성 실패 (Storage/권한/네트워크 확인)")
+
+        with b2:
+            if st.button("🔄 백업 목록 새로고침"):
+                st.rerun()
+
+        backups = list_backups(limit=30)
+        if not backups:
+            st.info("백업 파일이 없습니다. (auto_backup이 동작했는지, Storage 버킷/권한 확인)")
+            st.stop()
+
+        selected = st.selectbox("복구할 백업 선택", backups, key="restore_backup_file")
+
+        c3, c4 = st.columns(2)
+        with c3:
+            if st.button("👀 백업 미리보기"):
+                preview = download_backup_json(selected)
+                if preview is None:
+                    st.error("백업 미리보기 실패 (파일 손상/권한/형식 문제)")
+                else:
+                    st.success(f"카드 {len(preview)}개")
+                    st.json(preview[:3])
+
+        with c4:
+            confirm = st.checkbox("이 백업으로 복구(전체 덮어쓰기)에 동의합니다.", key="restore_confirm")
+
+        if st.button("🚨 복구 실행", disabled=not confirm):
+            with st.spinner("복구 중..."):
+                ok = restore_from_backup(selected)
+            if ok:
+                sync()
+                st.success("✅ 복구 완료! (DB가 백업 상태로 교체되었습니다)")
+                st.rerun()
 
 
 
