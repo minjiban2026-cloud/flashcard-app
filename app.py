@@ -4,6 +4,7 @@ import json
 import re
 import uuid
 import httpx
+import html
 from datetime import datetime
 from supabase import create_client
 from postgrest.exceptions import APIError
@@ -44,10 +45,8 @@ st.markdown("""
   --brand2:#7c3aed;
   --shadow: 0 18px 40px rgba(2,6,23,0.10);
   --shadow2: 0 10px 22px rgba(2,6,23,0.08);
-  --radius: 22px;
 }
 
-/* 전체 배경 */
 .stApp{
   background: radial-gradient(1200px 600px at 20% 0%, rgba(79,70,229,0.10), transparent 55%),
               radial-gradient(900px 520px at 90% 10%, rgba(124,58,237,0.10), transparent 55%),
@@ -56,14 +55,12 @@ st.markdown("""
   color: var(--text);
 }
 
-/* 중앙 폭 / 여백 */
 .block-container{
   max-width: 760px;
   padding-top: 1.25rem;
   padding-bottom: 4rem;
 }
 
-/* 상단 타이틀 */
 .app-title{
   display:flex;
   align-items:center;
@@ -72,24 +69,9 @@ st.markdown("""
   font-size: 26px;
   font-weight: 900;
   letter-spacing: -0.4px;
-  margin: 0 0 1rem 0;
-}
-.app-sub{
-  text-align:center;
-  color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 1.3rem;
+  margin: 0 0 0.7rem 0;
 }
 
-/* 섹션 헤더(페이지 안에서 사용할 수 있음) */
-.section-title{
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--text);
-  margin: 10px 0 8px 0;
-}
-
-/* 라디오(상단 메뉴) 주변 간격 */
 div[role="radiogroup"]{
   background: rgba(255,255,255,0.7);
   border: 1px solid rgba(229,231,235,0.8);
@@ -98,7 +80,6 @@ div[role="radiogroup"]{
   box-shadow: var(--shadow2);
 }
 
-/* 입력창/셀렉트/텍스트에리어 */
 .stTextInput input,
 .stTextArea textarea,
 .stSelectbox [data-baseweb="select"]{
@@ -106,13 +87,7 @@ div[role="radiogroup"]{
   border: 1px solid rgba(229,231,235,0.95) !important;
   box-shadow: 0 1px 0 rgba(2,6,23,0.03) !important;
 }
-.stTextInput input:focus,
-.stTextArea textarea:focus{
-  border-color: rgba(79,70,229,0.55) !important;
-  box-shadow: 0 0 0 4px rgba(79,70,229,0.12) !important;
-}
 
-/* 카드 UI */
 .flashcard{
   background: var(--card);
   padding: 34px 34px;
@@ -122,14 +97,12 @@ div[role="radiogroup"]{
   line-height: 1.7;
   text-align: center;
   white-space: pre-wrap;
-
   display:flex;
   flex-direction:column;
   justify-content:center;
   border: 1px solid rgba(229,231,235,0.65);
 }
 
-/* 카드 라벨(문제/정답 등) */
 .flashcard-label{
   display:inline-flex;
   align-self:center;
@@ -143,7 +116,6 @@ div[role="radiogroup"]{
   margin-bottom: 12px;
 }
 
-/* 진행 표시 */
 .progress{
   font-size: 12px;
   color: var(--muted);
@@ -151,7 +123,6 @@ div[role="radiogroup"]{
   margin: 2px 2px 8px 2px;
 }
 
-/* 이미지(암기 모드) */
 .flashcard-image{
   width: 52%;
   max-width: 320px;
@@ -162,11 +133,11 @@ div[role="radiogroup"]{
   border: 1px solid rgba(229,231,235,0.9);
   box-shadow: 0 8px 18px rgba(2,6,23,0.08);
 }
+
 .flashcard-text{
   white-space: pre-wrap;
 }
 
-/* 기본 버튼 스타일 통일 */
 .stButton button{
   border-radius: 14px !important;
   padding: 10px 14px !important;
@@ -175,7 +146,6 @@ div[role="radiogroup"]{
   box-shadow: 0 10px 22px rgba(2,6,23,0.06);
 }
 
-/* 폼 저장 버튼(Primary Action) */
 div[data-testid="stFormSubmitButton"] > button{
   background: linear-gradient(135deg, var(--brand), var(--brand2)) !important;
   color: white !important;
@@ -186,7 +156,6 @@ div[data-testid="stFormSubmitButton"] > button:hover{
   transform: translateY(-1px);
 }
 
-/* expander 깔끔하게 */
 details{
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(229,231,235,0.85);
@@ -199,7 +168,6 @@ details > summary{
   color: var(--text);
 }
 
-/* 캡션/도움말 */
 .stCaption{
   color: var(--muted) !important;
 }
@@ -213,10 +181,6 @@ def fetch_cards():
     return supabase.table(TABLE).select("*").order("created_at").execute().data or []
 
 def fetch_cards_safe():
-    """
-    Supabase가 Paused/기동 중/네트워크 문제여도 앱이 죽지 않게
-    실패 시 None 반환
-    """
     try:
         return fetch_cards()
     except (httpx.ConnectError, APIError, Exception):
@@ -250,7 +214,6 @@ def manual_backup_now():
         return False
 
 def safe_filename(name: str) -> str:
-    """Supabase Storage에서 허용되는 안전한 파일명으로 변환 (영문/숫자/._- 만 허용)"""
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 def upload_image(file, folder):
@@ -259,7 +222,6 @@ def upload_image(file, folder):
     try:
         safe_name = safe_filename(file.name)
         filename = f"{folder}/{uuid.uuid4().hex}_{safe_name}"
-
         supabase.storage.from_(IMAGE_BUCKET).upload(
             filename,
             file.getvalue(),
@@ -328,7 +290,6 @@ def reset_wrong_by_category(category):
     except Exception:
         st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
-# ✅ 카테고리 전체 삭제(카드 전체 삭제)
 def delete_category(category: str):
     try:
         supabase.table(TABLE).delete().eq("category", category).execute()
@@ -338,7 +299,6 @@ def delete_category(category: str):
         st.error("⚠️ 카테고리 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
         return False
 
-# ✅ 카테고리 병합/이름 변경(일괄 업데이트)
 def merge_category(from_cat: str, to_cat: str):
     try:
         supabase.table(TABLE).update({"category": to_cat}).eq("category", from_cat).execute()
@@ -364,14 +324,9 @@ def list_backups(limit=30):
 def download_backup_json(filename: str):
     try:
         data = supabase.storage.from_(BACKUP_BUCKET).download(filename)
-        if hasattr(data, "read"):
-            raw = data.read()
-        else:
-            raw = data
+        raw = data.read() if hasattr(data, "read") else data
         obj = json.loads(raw.decode("utf-8"))
-        if isinstance(obj, list):
-            return obj
-        return None
+        return obj if isinstance(obj, list) else None
     except Exception:
         return None
 
@@ -383,11 +338,8 @@ def restore_from_backup(filename: str):
 
     cleaned = []
     for c in backup_cards:
-        if not isinstance(c, dict):
-            continue
-        if "category" not in c or "front" not in c or "back" not in c:
-            continue
-        cleaned.append(c)
+        if isinstance(c, dict) and ("category" in c) and ("front" in c) and ("back" in c):
+            cleaned.append(c)
 
     if not cleaned:
         st.error("⚠️ 백업 데이터가 비어있거나 유효한 카드가 없습니다. 복구를 중단했습니다.")
@@ -408,8 +360,7 @@ def restore_from_backup(filename: str):
 
         chunk2 = 200
         for i in range(0, len(cleaned), chunk2):
-            batch = cleaned[i:i+chunk2]
-            supabase.table(TABLE).insert(batch).execute()
+            supabase.table(TABLE).insert(cleaned[i:i+chunk2]).execute()
 
         auto_backup()
         return True
@@ -417,6 +368,25 @@ def restore_from_backup(filename: str):
     except Exception:
         st.error("⚠️ 복구 중 오류가 발생했습니다. (RLS/권한/DB 스키마/네트워크 확인)")
         return False
+
+# =======================
+# ✅ 렌더링 전용 정리 (DB 영향 없음)
+# - 기존 카드 데이터는 절대 수정하지 않음
+# - 화면에 보여줄 때만 '</div>' 같은 찌꺼기 줄을 제거
+# - HTML 깨짐 방지(escape) + 줄바꿈 유지(<br>)
+# =======================
+def render_safe_text(s: str) -> str:
+    s = s or ""
+    lines = s.splitlines()
+    cleaned = []
+    for line in lines:
+        t = line.strip().lower()
+        # 딱 문제되는 찌꺼기만 제거 (내용 영향 최소화)
+        if t in ("</div>", "<div>"):
+            continue
+        cleaned.append(line)
+    s2 = "\n".join(cleaned)
+    return html.escape(s2).replace("\n", "<br>")
 
 # =======================
 # 세션 상태 (핵심 유지)
@@ -440,7 +410,6 @@ if "order" not in st.session_state:
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
 
-# (추가) 암기모드 필터 변경 감지용
 if "study_filter_sig" not in st.session_state:
     st.session_state.study_filter_sig = None
 
@@ -468,9 +437,7 @@ def count_by_category(cards, category):
 # 헤더 & Supabase 연결 실패 방어막
 # =======================
 st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-sub">Streamlit + Supabase 기반 개인 학습용 플래시카드</div>', unsafe_allow_html=True)
 
-    
 if not st.session_state.supabase_ok:
     st.error("⚠️ Supabase 프로젝트가 잠들어 있거나(Paused), 깨는 중이거나 네트워크 문제로 연결에 실패했습니다.\n\nSupabase에서 Resume 후 아래 버튼을 눌러주세요.")
     if st.button("🔄 다시 시도"):
@@ -512,15 +479,13 @@ def save_card_fast():
     st.session_state.upload_key += 1
     st.session_state.input_front = ""
     st.session_state.input_back = ""
-
     sync()
     st.rerun()
 
 # =======================
-# 1️⃣ 카드 입력 (카테고리 유지)
+# 1️⃣ 카드 입력
 # =======================
 if page == "➕ 카드 입력":
-
     st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
 
     with st.form("card_input_form", clear_on_submit=False):
@@ -540,7 +505,6 @@ if page == "➕ 카드 입력":
 # 2️⃣ 암기 모드
 # =======================
 elif page == "🧠 암기 모드":
-
     if not st.session_state.cards:
         st.warning("카드가 없습니다.")
         st.stop()
@@ -646,6 +610,8 @@ elif page == "🧠 암기 모드":
     text = second_text if st.session_state.show_back else first_text
     img = second_img if st.session_state.show_back else first_img
 
+    safe_text = render_safe_text(text)
+
     st.markdown(
         f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
         unsafe_allow_html=True
@@ -654,8 +620,8 @@ elif page == "🧠 암기 모드":
     st.markdown(
         f"""
         <div class="flashcard">
-            <div class="flashcard-label">{label}</div>
-            <div class="flashcard-text">{text}</div>
+            <div class="flashcard-label">{html.escape(label)}</div>
+            <div class="flashcard-text">{safe_text}</div>
             {"<img src='" + img + "' class='flashcard-image' />" if img else ""}
         </div>
         """,
@@ -703,7 +669,6 @@ elif page == "🧠 암기 모드":
 # 3️⃣ 카드 관리
 # =======================
 elif page == "🛠️ 카드 관리":
-
     if not st.session_state.cards:
         st.warning("카드가 없습니다. 먼저 카드 입력에서 카드를 추가하세요.")
         st.stop()
@@ -722,7 +687,6 @@ elif page == "🛠️ 카드 관리":
 
     card = st.selectbox("카드 선택", cards, format_func=lambda c: (c.get("front") or "(앞면 없음)"))
 
-    # ✅ 현재 이미지 상태 확인/미리보기
     st.markdown("### 🖼️ 현재 등록된 이미지")
     p1, p2 = st.columns(2)
     with p1:
@@ -758,9 +722,6 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success("삭제 완료")
 
-    # =======================
-    # 🗂️ 카테고리 관리 (삭제 + 병합) - 추가
-    # =======================
     st.markdown("---")
     with st.expander("🗂️ 카테고리 관리 (삭제/병합)", expanded=False):
         st.caption("카테고리는 별도 테이블이 아니라 카드의 category 값입니다. 삭제/병합은 카드에 직접 반영됩니다.")
@@ -775,34 +736,33 @@ elif page == "🛠️ 카드 관리":
         st.caption(f"선택 카테고리 카드 수: {target_count}개")
 
         st.markdown("#### 🔀 카테고리 병합(이름 변경)")
-        to_cat = st.text_input("병합/변경할 카테고리 이름", key="cat_merge_to", placeholder="예: 전기전자")
+        to_cat = st.text_input("병합/변경할 카테고리 이름", key="cat_merge_to", placeholder="예: 전기전자").strip()
         merge_confirm = st.checkbox("병합을 실행합니다. (대상 카테고리의 모든 카드 category 값이 변경됩니다)", key="cat_merge_confirm")
 
-        if st.button("🔀 병합 실행", disabled=not merge_confirm):
-            new_name = (to_cat or "").strip()
-            if not new_name:
+        if st.button("🔀 병합 실행"):
+            if not merge_confirm:
+                st.warning("병합 동의 체크박스를 먼저 선택하세요.")
+                st.stop()
+            if not to_cat:
                 st.warning("변경할 카테고리 이름을 입력하세요.")
-            elif new_name == target_cat:
+                st.stop()
+            if to_cat == target_cat:
                 st.info("대상과 동일한 이름입니다. 변경할 필요가 없습니다.")
-            else:
-                # 안전: 병합 전에 수동 백업 1회
-                manual_backup_now()
-                ok = merge_category(target_cat, new_name)
-                if ok:
-                    sync()
-                    st.success(f"병합 완료: '{target_cat}' → '{new_name}'")
-                    st.rerun()
+                st.stop()
+
+            manual_backup_now()
+            ok = merge_category(target_cat, to_cat)
+            if ok:
+                sync()
+                st.success(f"병합 완료: '{target_cat}' → '{to_cat}'")
+                st.rerun()
 
         st.markdown("#### 🗑️ 카테고리 삭제(해당 카테고리 카드 전체 삭제)")
         st.caption("⚠️ 이 작업은 되돌리기 어렵습니다. 실행 전에 자동으로 수동 백업을 1회 생성합니다.")
-
-        del_confirm1 = st.checkbox(
-            "이 카테고리를 삭제하면 해당 카드가 모두 삭제됨을 이해했습니다.",
-            key="cat_del_confirm1"
-        )
+        del_confirm1 = st.checkbox("이 카테고리를 삭제하면 해당 카드가 모두 삭제됨을 이해했습니다.", key="cat_del_confirm1")
 
         del_phrase = f"DELETE {target_cat}"
-        st.code(del_phrase)  # ✅ 사용자가 복사/확인하기 쉬움
+        st.code(del_phrase)
 
         del_confirm2 = st.text_input(
             "확인을 위해 위 문구를 정확히 입력하세요:",
@@ -819,7 +779,6 @@ elif page == "🛠️ 카드 관리":
                 st.warning("확인 문구가 정확하지 않습니다. 위 문구를 그대로 입력하세요.")
                 st.stop()
 
-            # 안전: 삭제 전에 수동 백업 1회
             manual_backup_now()
             ok = delete_category(target_cat)
             if ok:
@@ -827,10 +786,6 @@ elif page == "🛠️ 카드 관리":
                 st.success(f"삭제 완료: '{target_cat}' 카테고리의 카드가 모두 삭제되었습니다.")
                 st.rerun()
 
-
-    # =======================
-    # ♻️ 백업 복구 UI
-    # =======================
     st.markdown("---")
     with st.expander("♻️ 백업 복구 (전체 덮어쓰기)", expanded=False):
         st.caption("⚠️ 선택한 백업으로 DB의 카드가 **전체 교체**됩니다. (현재 데이터는 삭제 후 백업 데이터로 복원)")
@@ -875,5 +830,3 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success("✅ 복구 완료! (DB가 백업 상태로 교체되었습니다)")
                 st.rerun()
-
-
