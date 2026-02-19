@@ -795,14 +795,30 @@ elif page == "🛠️ 카드 관리":
 
         st.markdown("#### 🗑️ 카테고리 삭제(해당 카테고리 카드 전체 삭제)")
         st.caption("⚠️ 이 작업은 되돌리기 어렵습니다. 실행 전에 자동으로 수동 백업을 1회 생성합니다.")
-        del_confirm1 = st.checkbox("이 카테고리를 삭제하면 해당 카드가 모두 삭제됨을 이해했습니다.", key="cat_del_confirm1")
+
+        del_confirm1 = st.checkbox(
+            "이 카테고리를 삭제하면 해당 카드가 모두 삭제됨을 이해했습니다.",
+            key="cat_del_confirm1"
+        )
+
         del_phrase = f"DELETE {target_cat}"
-        del_confirm2 = st.text_input(f"확인을 위해 아래 문구를 정확히 입력하세요:", value="", key="cat_del_confirm2",
-                                     placeholder=del_phrase)
+        st.code(del_phrase)  # ✅ 사용자가 복사/확인하기 쉬움
 
-        can_delete = bool(del_confirm1) and (del_confirm2.strip() == del_phrase)
+        del_confirm2 = st.text_input(
+            "확인을 위해 위 문구를 정확히 입력하세요:",
+            value="",
+            key="cat_del_confirm2",
+            placeholder=del_phrase
+        )
 
-        if st.button("🗑️ 카테고리 삭제 실행", disabled=not can_delete):
+        if st.button("🗑️ 카테고리 삭제 실행"):
+            if not del_confirm1:
+                st.warning("체크박스를 먼저 선택하세요.")
+                st.stop()
+            if del_confirm2.strip() != del_phrase:
+                st.warning("확인 문구가 정확하지 않습니다. 위 문구를 그대로 입력하세요.")
+                st.stop()
+
             # 안전: 삭제 전에 수동 백업 1회
             manual_backup_now()
             ok = delete_category(target_cat)
@@ -810,6 +826,7 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success(f"삭제 완료: '{target_cat}' 카테고리의 카드가 모두 삭제되었습니다.")
                 st.rerun()
+
 
     # =======================
     # ♻️ 백업 복구 UI
@@ -858,4 +875,5 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success("✅ 복구 완료! (DB가 백업 상태로 교체되었습니다)")
                 st.rerun()
+
 
