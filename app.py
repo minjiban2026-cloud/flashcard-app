@@ -328,15 +328,28 @@ elif page == "🧠 암기 모드":
         enter_only = st.checkbox("⌨️ 엔터 온리", value=True)
     with c4:
         recall_mode = st.checkbox("🧠 회상 모드")
-
+    # =======================
+    # 🔎 검색(필터) - 추가
+    # =======================
+    q = st.text_input(
+        "🔎 검색",
+        key="study_search_q",
+        placeholder="앞면/뒷면에서 키워드로 찾기 (예: CRC, 오스테나이트, 서브넷)",
+    ).strip().lower()
     st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
     base = [c for c in cards if c["category"] == cat]
     if wrong_only:
         base = [c for c in base if int(c["wrong_count"]) > 0]
-
+        
+    # ✅ 검색어 필터 (앞면/뒷면 포함)
+    if q:
+        base = [
+            c for c in base
+            if (q in (c.get("front") or "").lower()) or (q in (c.get("back") or "").lower())
+        ]
     if not base:
-        st.info("표시할 카드가 없습니다.")
+        st.info("표시할 카드가 없습니다." if not q else "검색 결과가 없습니다. 다른 키워드로 시도해보세요.")
         st.stop()
 
     ids = [c["id"] for c in base]
@@ -469,6 +482,7 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
 
 
 
