@@ -97,12 +97,12 @@ div[data-testid="stFormSubmitButton"] > button:hover {
 
 /* 이미지 크기 제한 */
 .flashcard-image {
-    width: 25%;
-    max-width: 140px;
-    min-width: 90px;
+    width: 45%;
+    max-width: 260px;
+    min-width: 120px;
     margin: 14px auto 0 auto;
     display: block;
-    border-radius: 10px;
+    border-radius: 12px;
 }
 
 .flashcard-text {
@@ -433,6 +433,21 @@ elif page == "🛠️ 카드 관리":
     cards = [c for c in st.session_state.cards if c["category"] == cat]
     card = st.selectbox("카드 선택", cards, format_func=lambda c: c["front"])
 
+    # ✅ 현재 이미지 상태 확인/미리보기 (추가)
+    st.markdown("### 🖼️ 현재 등록된 이미지")
+
+    p1, p2 = st.columns(2)
+
+    with p1:
+        st.caption(f"앞면 이미지: {'✅ 있음' if card.get('front_image_url') else '❌ 없음'}")
+        if card.get("front_image_url"):
+            st.image(card["front_image_url"], use_container_width=True)
+
+    with p2:
+        st.caption(f"뒷면 이미지: {'✅ 있음' if card.get('back_image_url') else '❌ 없음'}")
+        if card.get("back_image_url"):
+            st.image(card["back_image_url"], use_container_width=True)
+
     new_cat = st.text_input("카테고리", card["category"])
     new_front = st.text_input("앞면", card["front"])
     new_back = st.text_area("뒷면 (줄바꿈 가능)", card["back"], height=160)
@@ -454,6 +469,8 @@ elif page == "🛠️ 카드 관리":
             delete_card(card["id"])
             sync()
             st.success("삭제 완료")
+
+
 
 
 
