@@ -33,80 +33,175 @@ st.set_page_config(
 # =======================
 st.markdown("""
 <style>
-.stApp {
-    background: linear-gradient(180deg, #f9fafb 0%, #eef2ff 100%);
-    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+:root{
+  --bg1:#f8fafc;
+  --bg2:#eef2ff;
+  --card:#ffffff;
+  --text:#0f172a;
+  --muted:#64748b;
+  --line:#e5e7eb;
+  --brand:#4f46e5;
+  --brand2:#7c3aed;
+  --shadow: 0 18px 40px rgba(2,6,23,0.10);
+  --shadow2: 0 10px 22px rgba(2,6,23,0.08);
+  --radius: 22px;
 }
 
-.block-container {
-    max-width: 720px;
-    padding-top: 1.5rem;
-    padding-bottom: 4rem;
+/* 전체 배경 */
+.stApp{
+  background: radial-gradient(1200px 600px at 20% 0%, rgba(79,70,229,0.10), transparent 55%),
+              radial-gradient(900px 520px at 90% 10%, rgba(124,58,237,0.10), transparent 55%),
+              linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  color: var(--text);
 }
 
-/* 헤더 */
-.app-title {
-    font-size: 26px;
-    font-weight: 800;
-    text-align: center;
-    margin-bottom: 1.5rem;
+/* 중앙 폭 / 여백 */
+.block-container{
+  max-width: 760px;
+  padding-top: 1.25rem;
+  padding-bottom: 4rem;
 }
 
-/* 카드 */
-.flashcard {
-    background: white;
-    padding: 36px 36px;
-    border-radius: 28px;
-    box-shadow: 0 24px 48px rgba(0,0,0,0.08);
-    font-size: 22px;
-    line-height: 1.7;
-    text-align: center;
-    white-space: pre-wrap;
-
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+/* 상단 타이틀 */
+.app-title{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.4px;
+  margin: 0 0 1rem 0;
+}
+.app-sub{
+  text-align:center;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 1.3rem;
 }
 
-.flashcard-label {
-    font-size: 12px;
-    font-weight: 700;
-    color: #6366F1;
-    margin-bottom: 10px;
+/* 섹션 헤더(페이지 안에서 사용할 수 있음) */
+.section-title{
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 10px 0 8px 0;
 }
 
-.progress {
-    font-size: 12px;
-    color: #9CA3AF;
-    text-align: right;
-    margin-bottom: 8px;
+/* 라디오(상단 메뉴) 주변 간격 */
+div[role="radiogroup"]{
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(229,231,235,0.8);
+  border-radius: 999px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow2);
 }
 
-/* 저장 버튼 (Primary Action) */
-div[data-testid="stFormSubmitButton"] > button {
-    background: linear-gradient(135deg, #6366F1, #818CF8);
-    color: white;
-    border-radius: 14px;
-    font-weight: 700;
-    padding: 10px 18px;
-    border: none;
+/* 입력창/셀렉트/텍스트에리어 */
+.stTextInput input,
+.stTextArea textarea,
+.stSelectbox [data-baseweb="select"]{
+  border-radius: 14px !important;
+  border: 1px solid rgba(229,231,235,0.95) !important;
+  box-shadow: 0 1px 0 rgba(2,6,23,0.03) !important;
 }
-div[data-testid="stFormSubmitButton"] > button:hover {
-    opacity: 0.9;
-}
-
-/* 이미지 크기 제한 */
-.flashcard-image {
-    width: 45%;
-    max-width: 260px;
-    min-width: 120px;
-    margin: 14px auto 0 auto;
-    display: block;
-    border-radius: 12px;
+.stTextInput input:focus,
+.stTextArea textarea:focus{
+  border-color: rgba(79,70,229,0.55) !important;
+  box-shadow: 0 0 0 4px rgba(79,70,229,0.12) !important;
 }
 
-.flashcard-text {
-    white-space: pre-wrap;
+/* 카드 UI */
+.flashcard{
+  background: var(--card);
+  padding: 34px 34px;
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  font-size: 22px;
+  line-height: 1.7;
+  text-align: center;
+  white-space: pre-wrap;
+
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  border: 1px solid rgba(229,231,235,0.65);
+}
+
+/* 카드 라벨(문제/정답 등) */
+.flashcard-label{
+  display:inline-flex;
+  align-self:center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--brand);
+  background: rgba(79,70,229,0.10);
+  border: 1px solid rgba(79,70,229,0.18);
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+
+/* 진행 표시 */
+.progress{
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  margin: 2px 2px 8px 2px;
+}
+
+/* 이미지(암기 모드) */
+.flashcard-image{
+  width: 52%;
+  max-width: 320px;
+  min-width: 140px;
+  margin: 16px auto 0 auto;
+  display:block;
+  border-radius: 14px;
+  border: 1px solid rgba(229,231,235,0.9);
+  box-shadow: 0 8px 18px rgba(2,6,23,0.08);
+}
+.flashcard-text{
+  white-space: pre-wrap;
+}
+
+/* 기본 버튼 스타일 통일 */
+.stButton button{
+  border-radius: 14px !important;
+  padding: 10px 14px !important;
+  font-weight: 800 !important;
+  border: 1px solid rgba(229,231,235,0.95) !important;
+  box-shadow: 0 10px 22px rgba(2,6,23,0.06);
+}
+
+/* 폼 저장 버튼(Primary Action) */
+div[data-testid="stFormSubmitButton"] > button{
+  background: linear-gradient(135deg, var(--brand), var(--brand2)) !important;
+  color: white !important;
+  border: none !important;
+}
+div[data-testid="stFormSubmitButton"] > button:hover{
+  opacity: 0.93;
+  transform: translateY(-1px);
+}
+
+/* expander 깔끔하게 */
+details{
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(229,231,235,0.85);
+  border-radius: 16px;
+  padding: 8px 12px;
+  box-shadow: var(--shadow2);
+}
+details > summary{
+  font-weight: 900;
+  color: var(--text);
+}
+
+/* 캡션/도움말 */
+.stCaption{
+  color: var(--muted) !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -233,31 +328,42 @@ def reset_wrong_by_category(category):
     except Exception:
         st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
+# ✅ 카테고리 전체 삭제(카드 전체 삭제)
+def delete_category(category: str):
+    try:
+        supabase.table(TABLE).delete().eq("category", category).execute()
+        auto_backup()
+        return True
+    except Exception:
+        st.error("⚠️ 카테고리 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+        return False
+
+# ✅ 카테고리 병합/이름 변경(일괄 업데이트)
+def merge_category(from_cat: str, to_cat: str):
+    try:
+        supabase.table(TABLE).update({"category": to_cat}).eq("category", from_cat).execute()
+        auto_backup()
+        return True
+    except Exception:
+        st.error("⚠️ 카테고리 병합에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+        return False
+
 def list_backups(limit=30):
-    """
-    Storage 버킷에서 백업 파일 목록을 가져옴.
-    (폴더 없이 루트에 올린다는 전제)
-    """
     try:
         items = supabase.storage.from_(BACKUP_BUCKET).list(path="")
-        # items: [{"name": "...", "updated_at": "...", ...}, ...]
         names = []
         for it in items or []:
             nm = it.get("name")
             if nm and nm.lower().endswith(".json") and nm.startswith("backup_"):
                 names.append(nm)
-        names.sort(reverse=True)  # 파일명에 시간 포함 → 역정렬 = 최신 우선
+        names.sort(reverse=True)
         return names[:limit]
     except Exception:
         return []
 
 def download_backup_json(filename: str):
-    """
-    지정 백업 파일을 다운로드해서 JSON(list)을 반환. 실패 시 None
-    """
     try:
         data = supabase.storage.from_(BACKUP_BUCKET).download(filename)
-        # supabase-py 버전에 따라 bytes 또는 file-like일 수 있음
         if hasattr(data, "read"):
             raw = data.read()
         else:
@@ -270,54 +376,42 @@ def download_backup_json(filename: str):
         return None
 
 def restore_from_backup(filename: str):
-    """
-    백업으로 DB 전체 복구:
-    1) 현재 DB에서 모든 카드 id를 가져와 batch delete
-    2) 백업 JSON을 batch insert
-    실패 시 False
-    """
     backup_cards = download_backup_json(filename)
     if backup_cards is None:
         st.error("⚠️ 백업 파일을 읽을 수 없습니다. (형식/권한/파일 손상)")
         return False
 
-    # 최소 필드 검증(너무 엄격하게 하면 복구가 막혀서, 필수만 확인)
     cleaned = []
     for c in backup_cards:
         if not isinstance(c, dict):
             continue
-        # 필수 키: category/front/back (DB 스키마에 맞춰)
         if "category" not in c or "front" not in c or "back" not in c:
             continue
         cleaned.append(c)
 
-    # 백업이 비어있으면 오히려 위험 → 막기
     if not cleaned:
         st.error("⚠️ 백업 데이터가 비어있거나 유효한 카드가 없습니다. 복구를 중단했습니다.")
         return False
 
     try:
-        # 1) 현재 데이터 전체 삭제(안전: id 목록 기반 batch delete)
         current = fetch_cards_safe()
         if current is None:
             st.error("⚠️ 현재 DB를 읽지 못했습니다. (Supabase 상태 확인)")
             return False
 
         ids = [c.get("id") for c in current if c.get("id") is not None]
-        # id가 없거나 이미 비어있으면 스킵
         if ids:
             chunk = 200
             for i in range(0, len(ids), chunk):
                 batch = ids[i:i+chunk]
                 supabase.table(TABLE).delete().in_("id", batch).execute()
 
-        # 2) 백업 데이터 insert (batch)
         chunk2 = 200
         for i in range(0, len(cleaned), chunk2):
             batch = cleaned[i:i+chunk2]
             supabase.table(TABLE).insert(batch).execute()
 
-        auto_backup()  # 복구 직후 상태도 다시 백업
+        auto_backup()
         return True
 
     except Exception:
@@ -367,11 +461,16 @@ def sync():
 def categories(cards):
     return sorted({c["category"] for c in cards if c.get("category") is not None})
 
+def count_by_category(cards, category):
+    return sum(1 for c in cards if c.get("category") == category)
+
 # =======================
 # 헤더 & Supabase 연결 실패 방어막
 # =======================
 st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-sub">Streamlit + Supabase 기반 개인 학습용 플래시카드</div>', unsafe_allow_html=True)
 
+    
 if not st.session_state.supabase_ok:
     st.error("⚠️ Supabase 프로젝트가 잠들어 있거나(Paused), 깨는 중이거나 네트워크 문제로 연결에 실패했습니다.\n\nSupabase에서 Resume 후 아래 버튼을 눌러주세요.")
     if st.button("🔄 다시 시도"):
@@ -410,7 +509,6 @@ def save_card_fast():
     if not ok:
         return
 
-    # 업로더 리셋 + 입력창 정리(카테고리는 유지)
     st.session_state.upload_key += 1
     st.session_state.input_front = ""
     st.session_state.input_back = ""
@@ -425,7 +523,6 @@ if page == "➕ 카드 입력":
 
     st.text_input("카테고리", key="input_category", placeholder="예: 전기전자")
 
-    # ✅ 이미지/텍스트 사라짐 방지: clear_on_submit=False + on_click 저장
     with st.form("card_input_form", clear_on_submit=False):
         st.text_input("앞면", key="input_front", placeholder="문제 또는 개념")
         st.text_area("뒷면 (줄바꿈 가능)", key="input_back", height=160, placeholder="Enter = 줄바꿈")
@@ -475,16 +572,12 @@ elif page == "🧠 암기 모드":
 
     st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
-    # =======================
-    # 🔎 검색(필터)
-    # =======================
     q = st.text_input(
         "🔎 검색",
         key="study_search_q",
         placeholder="앞면/뒷면에서 키워드로 찾기 (예: CRC, 오스테나이트, 서브넷)",
     ).strip().lower()
 
-    # ✅ 필터 변경 시 흐름 꼬임 방지: index/order/show_back 자동 리셋
     filter_sig = (cat, bool(random_mode), bool(wrong_only), bool(enter_only), bool(recall_mode), q)
     if st.session_state.study_filter_sig is None:
         st.session_state.study_filter_sig = filter_sig
@@ -498,7 +591,6 @@ elif page == "🧠 암기 모드":
     if wrong_only:
         base = [c for c in base if int(c.get("wrong_count") or 0) > 0]
 
-    # ✅ 검색어 필터 (앞면/뒷면 포함)
     if q:
         base = [
             c for c in base
@@ -612,7 +704,6 @@ elif page == "🧠 암기 모드":
 # =======================
 elif page == "🛠️ 카드 관리":
 
-    # ✅ 카드 0장 가드
     if not st.session_state.cards:
         st.warning("카드가 없습니다. 먼저 카드 입력에서 카드를 추가하세요.")
         st.stop()
@@ -668,7 +759,60 @@ elif page == "🛠️ 카드 관리":
                 st.success("삭제 완료")
 
     # =======================
-    # ♻️ 백업 복구 UI (추가)
+    # 🗂️ 카테고리 관리 (삭제 + 병합) - 추가
+    # =======================
+    st.markdown("---")
+    with st.expander("🗂️ 카테고리 관리 (삭제/병합)", expanded=False):
+        st.caption("카테고리는 별도 테이블이 아니라 카드의 category 값입니다. 삭제/병합은 카드에 직접 반영됩니다.")
+
+        all_cats = categories(st.session_state.cards)
+        if not all_cats:
+            st.info("카테고리가 없습니다.")
+            st.stop()
+
+        target_cat = st.selectbox("대상 카테고리", all_cats, key="cat_manage_target")
+        target_count = count_by_category(st.session_state.cards, target_cat)
+        st.caption(f"선택 카테고리 카드 수: {target_count}개")
+
+        st.markdown("#### 🔀 카테고리 병합(이름 변경)")
+        to_cat = st.text_input("병합/변경할 카테고리 이름", key="cat_merge_to", placeholder="예: 전기전자")
+        merge_confirm = st.checkbox("병합을 실행합니다. (대상 카테고리의 모든 카드 category 값이 변경됩니다)", key="cat_merge_confirm")
+
+        if st.button("🔀 병합 실행", disabled=not merge_confirm):
+            new_name = (to_cat or "").strip()
+            if not new_name:
+                st.warning("변경할 카테고리 이름을 입력하세요.")
+            elif new_name == target_cat:
+                st.info("대상과 동일한 이름입니다. 변경할 필요가 없습니다.")
+            else:
+                # 안전: 병합 전에 수동 백업 1회
+                manual_backup_now()
+                ok = merge_category(target_cat, new_name)
+                if ok:
+                    sync()
+                    st.success(f"병합 완료: '{target_cat}' → '{new_name}'")
+                    st.rerun()
+
+        st.markdown("#### 🗑️ 카테고리 삭제(해당 카테고리 카드 전체 삭제)")
+        st.caption("⚠️ 이 작업은 되돌리기 어렵습니다. 실행 전에 자동으로 수동 백업을 1회 생성합니다.")
+        del_confirm1 = st.checkbox("이 카테고리를 삭제하면 해당 카드가 모두 삭제됨을 이해했습니다.", key="cat_del_confirm1")
+        del_phrase = f"DELETE {target_cat}"
+        del_confirm2 = st.text_input(f"확인을 위해 아래 문구를 정확히 입력하세요:", value="", key="cat_del_confirm2",
+                                     placeholder=del_phrase)
+
+        can_delete = bool(del_confirm1) and (del_confirm2.strip() == del_phrase)
+
+        if st.button("🗑️ 카테고리 삭제 실행", disabled=not can_delete):
+            # 안전: 삭제 전에 수동 백업 1회
+            manual_backup_now()
+            ok = delete_category(target_cat)
+            if ok:
+                sync()
+                st.success(f"삭제 완료: '{target_cat}' 카테고리의 카드가 모두 삭제되었습니다.")
+                st.rerun()
+
+    # =======================
+    # ♻️ 백업 복구 UI
     # =======================
     st.markdown("---")
     with st.expander("♻️ 백업 복구 (전체 덮어쓰기)", expanded=False):
@@ -714,44 +858,4 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success("✅ 복구 완료! (DB가 백업 상태로 교체되었습니다)")
                 st.rerun()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
