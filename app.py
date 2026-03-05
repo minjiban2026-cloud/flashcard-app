@@ -186,6 +186,17 @@ def fetch_cards_safe():
     except (httpx.ConnectError, APIError, Exception):
         return None
 
+# ✅ 캐시(로딩 속도 개선 핵심)
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_fetch_cards_safe():
+    return fetch_cards_safe()
+
+def clear_cards_cache():
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
 def auto_backup():
     try:
         cards = fetch_cards()
@@ -243,6 +254,7 @@ def insert_card(category, front, back, front_img, back_img):
             "wrong_count": 0
         }).execute()
         auto_backup()
+        clear_cards_cache()
         return True
     except Exception:
         st.error("⚠️ 카드 저장에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
@@ -258,6 +270,7 @@ def update_card(card_id, category, front, back, front_img, back_img):
             "back_image_url": back_img,
         }).eq("id", card_id).execute()
         auto_backup()
+        clear_cards_cache()
         return True
     except Exception:
         st.error("⚠️ 카드 수정에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
@@ -267,6 +280,7 @@ def delete_card(card_id):
     try:
         supabase.table(TABLE).delete().eq("id", card_id).execute()
         auto_backup()
+        clear_cards_cache()
         return True
     except Exception:
         st.error("⚠️ 카드 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
@@ -275,18 +289,21 @@ def delete_card(card_id):
 def increment_wrong(card_id, current):
     try:
         supabase.table(TABLE).update({"wrong_count": int(current) + 1}).eq("id", card_id).execute()
+        clear_cards_cache()
     except Exception:
         st.warning("⚠️ 오답 카운트 반영 실패 (네트워크/DB 상태 확인)")
 
 def reset_wrong(card_id):
     try:
         supabase.table(TABLE).update({"wrong_count": 0}).eq("id", card_id).execute()
+        clear_cards_cache()
     except Exception:
         st.warning("⚠️ 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
 def reset_wrong_by_category(category):
     try:
         supabase.table(TABLE).update({"wrong_count": 0}).eq("category", category).execute()
+        clear_cards_cache()
     except Exception:
         st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
@@ -294,6 +311,7 @@ def delete_category(category: str):
     try:
         supabase.table(TABLE).delete().eq("category", category).execute()
         auto_backup()
+        clear_cards_cache()
         return True
     except Exception:
         st.error("⚠️ 카테고리 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
@@ -303,6 +321,7 @@ def merge_category(from_cat: str, to_cat: str):
     try:
         supabase.table(TABLE).update({"category": to_cat}).eq("category", from_cat).execute()
         auto_backup()
+        clear_cards_cache()
         return True
     except Exception:
         st.error("⚠️ 카테고리 병합에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
@@ -363,6 +382,7 @@ def restore_from_backup(filename: str):
             supabase.table(TABLE).insert(cleaned[i:i+chunk2]).execute()
 
         auto_backup()
+        clear_cards_cache()
         return True
 
     except Exception:
@@ -381,7 +401,6 @@ def render_safe_text(s: str) -> str:
     cleaned = []
     for line in lines:
         t = line.strip().lower()
-        # 딱 문제되는 찌꺼기만 제거 (내용 영향 최소화)
         if t in ("</div>", "<div>"):
             continue
         cleaned.append(line)
@@ -391,13 +410,14 @@ def render_safe_text(s: str) -> str:
 # =======================
 # 세션 상태 (핵심 유지)
 # =======================
-if "cards" not in st.session_state:
-    data = fetch_cards_safe()
-    st.session_state.cards = data if data is not None else []
-    st.session_state.supabase_ok = (data is not None)
-
 if "supabase_ok" not in st.session_state:
     st.session_state.supabase_ok = True
+
+if "cards" not in st.session_state:
+    with st.spinner("Supabase에서 카드 불러오는 중..."):
+        data = cached_fetch_cards_safe()
+    st.session_state.cards = data if data is not None else []
+    st.session_state.supabase_ok = (data is not None)
 
 if "study_cards" not in st.session_state:
     st.session_state.study_cards = None
@@ -417,7 +437,10 @@ if "study_filter_sig" not in st.session_state:
 # 공통
 # =======================
 def sync():
-    data = fetch_cards_safe()
+    # 변경 직후에는 캐시를 비우고 최신을 받는다
+    clear_cards_cache()
+    with st.spinner("동기화 중..."):
+        data = cached_fetch_cards_safe()
     if data is None:
         st.session_state.supabase_ok = False
         st.session_state.cards = []
@@ -441,7 +464,9 @@ st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', uns
 if not st.session_state.supabase_ok:
     st.error("⚠️ Supabase 프로젝트가 잠들어 있거나(Paused), 깨는 중이거나 네트워크 문제로 연결에 실패했습니다.\n\nSupabase에서 Resume 후 아래 버튼을 눌러주세요.")
     if st.button("🔄 다시 시도"):
-        data = fetch_cards_safe()
+        clear_cards_cache()
+        with st.spinner("다시 시도 중..."):
+            data = cached_fetch_cards_safe()
         if data is not None:
             st.session_state.cards = data
             st.session_state.supabase_ok = True
@@ -516,7 +541,6 @@ elif page == "🧠 암기 모드":
         st.session_state.order = []
 
     cards = st.session_state.study_cards
-
     cat_list = categories(cards)
     if not cat_list:
         st.warning("카테고리가 없습니다. 카드 입력에서 카테고리를 먼저 추가하세요.")
