@@ -6,8 +6,10 @@ import uuid
 import httpx
 import html
 from datetime import datetime
+from io import BytesIO
 from supabase import create_client
 from postgrest.exceptions import APIError
+import pdfplumber
 
 # =======================
 # Supabase 연결
@@ -243,6 +245,124 @@ def upload_image(file, folder):
         st.warning("⚠️ 이미지 업로드 실패 (파일명 또는 Storage 설정 문제)")
         return None
 
+def upload_image_bytes(data: bytes, folder: str, filename: str, content_type="image/png"):
+    """파일 업로드 위젯이 아니라 메모리상의 bytes를 그대로 Storage에 업로드할 때 사용"""
+    try:
+        safe_name = safe_filename(filename)
+        path = f"{folder}/{uuid.uuid4().hex}_{safe_name}"
+        supabase.storage.from_(IMAGE_BUCKET).upload(
+            path,
+            data,
+            file_options={"content-type": content_type},
+        )
+        return supabase.storage.from_(IMAGE_BUCKET).get_public_url(path)
+    except Exception:
+        st.warning("⚠️ 이미지 업로드 실패 (파일명 또는 Storage 설정 문제)")
+        return None
+
+# =======================
+# 📄 PDF → 암기카드 자동 추출
+# - "암기카드 앱"류에서 내보낸 PDF 전용: 홀수 페이지=문제 4개(2x2),
+#   짝수 페이지=답 4개(2x2, 좌우가 뒤바뀐 배치)를 가정
+# - 앞면은 텍스트로, 뒷면은 표/그림이 섞여 있어도 안전하게
+#   "답 카드 영역을 통째로 이미지로 캡처"해서 back_image_url로 사용
+# =======================
+_PDF_MIRROR_POS = {"TL": "TR", "TR": "TL", "BL": "BR", "BR": "BL"}
+
+def _pdf_quadrant_blocks(page):
+    W, H = page.width, page.height
+    xmid, ymid = W / 2, H / 2
+    words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+    quads = {"TL": [], "TR": [], "BL": [], "BR": []}
+    for w in words:
+        cx = (w["x0"] + w["x1"]) / 2
+        cy = (w["top"] + w["bottom"]) / 2
+        key = ("T" if cy < ymid else "B") + ("L" if cx < xmid else "R")
+        quads[key].append(w)
+    blocks = {}
+    for k, ws in quads.items():
+        ws_sorted = sorted(ws, key=lambda w: (round(w["top"] / 3), w["x0"]))
+        lines, cur_line, cur_top = [], [], None
+        for w in ws_sorted:
+            if cur_top is None or abs(w["top"] - cur_top) < 5:
+                cur_line.append(w)
+                cur_top = w["top"] if cur_top is None else cur_top
+            else:
+                lines.append(cur_line)
+                cur_line = [w]
+                cur_top = w["top"]
+        if cur_line:
+            lines.append(cur_line)
+        line_texts = []
+        for line in lines:
+            line_sorted = sorted(line, key=lambda w: w["x0"])
+            line_texts.append(" ".join(x["text"] for x in line_sorted))
+        blocks[k] = line_texts
+    return blocks
+
+def _pdf_parse_block(lines):
+    full = " ".join(lines)
+    m = re.search(r"<\s*(.*?)\s*>", full)
+    category = m.group(1).replace(" ", "") if m else None
+    body_lines, header_done = [], False
+    for line in lines:
+        if not header_done:
+            if ">" in line:
+                header_done = True
+                after = line.split(">", 1)[1].strip()
+                if after:
+                    body_lines.append(after)
+                continue
+            else:
+                continue
+        else:
+            body_lines.append(line)
+    return category, "\n".join(l for l in body_lines if l.strip()).strip()
+
+def _pdf_crop_bbox(page, pos, margin=6):
+    W, H = page.width, page.height
+    xmid, ymid = W / 2, H / 2
+    if pos == "TL":
+        return (margin, margin, xmid - margin, ymid - margin)
+    if pos == "TR":
+        return (xmid + margin, margin, W - margin, ymid - margin)
+    if pos == "BL":
+        return (margin, ymid + margin, xmid - margin, H - margin)
+    if pos == "BR":
+        return (xmid + margin, ymid + margin, W - margin, H - margin)
+
+def extract_cards_from_pdf(file_bytes: bytes):
+    """PDF bytes -> [{category, front, back_image_bytes, src_pages}, ...]"""
+    cards = []
+    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+        n = len(pdf.pages)
+        for i in range(0, n, 2):
+            if i + 1 >= n:
+                break
+            qpage, apage = pdf.pages[i], pdf.pages[i + 1]
+            qblocks = _pdf_quadrant_blocks(qpage)
+            for pos in ["TL", "TR", "BL", "BR"]:
+                qlines = qblocks[pos]
+                if not qlines:
+                    continue
+                qcat, qbody = _pdf_parse_block(qlines)
+                if not qbody:
+                    continue
+                back_pos = _PDF_MIRROR_POS[pos]
+                bbox = _pdf_crop_bbox(apage, back_pos)
+                cropped = apage.crop(bbox)
+                img = cropped.to_image(resolution=200)
+                buf = BytesIO()
+                img.original.save(buf, format="PNG")
+                cards.append({
+                    "category": qcat or "미분류",
+                    "front": qbody,
+                    "back_image_bytes": buf.getvalue(),
+                    "src_pages": [i + 1, i + 2],
+                    "include": True,
+                })
+    return cards
+
 def insert_card(category, front, back, front_img, back_img):
     try:
         supabase.table(TABLE).insert({
@@ -476,7 +596,7 @@ if not st.session_state.supabase_ok:
 # =======================
 # 메뉴
 # =======================
-page = st.radio("", ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리"], horizontal=True)
+page = st.radio("", ["➕ 카드 입력", "🧠 암기 모드", "🛠️ 카드 관리", "📄 PDF 가져오기"], horizontal=True)
 
 # =======================
 # 카드 저장 (form 대응)
@@ -854,3 +974,94 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success("✅ 복구 완료! (DB가 백업 상태로 교체되었습니다)")
                 st.rerun()
+
+# =======================
+# 4️⃣ PDF 가져오기
+# =======================
+elif page == "📄 PDF 가져오기":
+    st.caption("문제 4개(2x2) → 답 4개(2x2) 순서로 페이지가 이어지는 '암기카드' PDF를 업로드하면 "
+               "카드를 자동으로 추출합니다. 앞면은 텍스트로, 뒷면은 표/그림이 섞여 있어도 안전하도록 "
+               "이미지로 캡처해서 넣습니다.")
+
+    if "pdf_cards" not in st.session_state:
+        st.session_state.pdf_cards = None
+    if "pdf_review_idx" not in st.session_state:
+        st.session_state.pdf_review_idx = 0
+
+    pdf_file = st.file_uploader("암기카드 PDF 업로드", ["pdf"], key="pdf_upload")
+
+    if st.button("🔍 PDF 분석하기", disabled=(pdf_file is None)):
+        with st.spinner("PDF에서 카드를 추출하는 중... (페이지가 많으면 시간이 걸릴 수 있어요)"):
+            try:
+                extracted = extract_cards_from_pdf(pdf_file.getvalue())
+            except Exception:
+                st.error("⚠️ PDF 분석에 실패했습니다. 파일 형식이나 레이아웃을 확인해주세요.")
+                extracted = None
+        if extracted is not None:
+            st.session_state.pdf_cards = extracted
+            st.session_state.pdf_review_idx = 0
+            st.success(f"총 {len(extracted)}개의 카드를 찾았습니다. 아래에서 확인 후 저장하세요.")
+
+    cards = st.session_state.pdf_cards
+    if cards:
+        st.markdown("---")
+        included = sum(1 for c in cards if c["include"])
+        st.caption(f"📚 추출된 카드 {len(cards)}개 · 저장 대상으로 선택된 카드 {included}개")
+
+        # 카테고리별 개수 요약
+        with st.expander("카테고리별 개수 보기", expanded=False):
+            cat_counts = {}
+            for c in cards:
+                cat_counts[c["category"]] = cat_counts.get(c["category"], 0) + 1
+            for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
+                st.write(f"- {cat}: {cnt}개")
+
+        # 한 장씩 확인하는 네비게이터
+        st.session_state.pdf_review_idx = st.session_state.pdf_review_idx % len(cards)
+        idx = st.session_state.pdf_review_idx
+        card = cards[idx]
+
+        st.markdown(f"**카드 {idx + 1} / {len(cards)}** (PDF {card['src_pages'][0]}-{card['src_pages'][1]}페이지)")
+
+        card["category"] = st.text_input("카테고리", value=card["category"], key=f"pdf_cat_{idx}")
+        card["front"] = st.text_area("앞면(문제)", value=card["front"], height=100, key=f"pdf_front_{idx}")
+        st.caption("뒷면(답) — PDF에서 캡처한 이미지 그대로 저장됩니다")
+        st.image(card["back_image_bytes"], use_container_width=True)
+        card["include"] = st.checkbox("✅ 이 카드를 저장 대상에 포함", value=card["include"], key=f"pdf_inc_{idx}")
+
+        nav1, nav2, nav3 = st.columns(3)
+        with nav1:
+            if st.button("◀ 이전 카드"):
+                st.session_state.pdf_review_idx -= 1
+                st.rerun()
+        with nav2:
+            if st.button("이 카드 제외하고 다음 ▶"):
+                card["include"] = False
+                st.session_state.pdf_review_idx += 1
+                st.rerun()
+        with nav3:
+            if st.button("다음 카드 ▶"):
+                st.session_state.pdf_review_idx += 1
+                st.rerun()
+
+        st.markdown("---")
+        st.warning(f"'저장 실행'을 누르면 선택된 {included}개 카드가 Supabase에 실제로 추가됩니다.")
+        if st.button("💾 선택한 카드 전체 저장", type="primary"):
+            to_save = [c for c in cards if c["include"]]
+            progress = st.progress(0, text="저장 중...")
+            saved, failed = 0, 0
+            for n, c in enumerate(to_save, start=1):
+                back_url = upload_image_bytes(
+                    c["back_image_bytes"], "back", f"pdf_{c['src_pages'][0]}_{c['src_pages'][1]}.png"
+                )
+                ok = insert_card(c["category"], c["front"], "(PDF 이미지 참고)", None, back_url)
+                if ok:
+                    saved += 1
+                else:
+                    failed += 1
+                progress.progress(n / len(to_save), text=f"저장 중... ({n}/{len(to_save)})")
+            progress.empty()
+            st.success(f"✅ {saved}개 저장 완료" + (f" · ⚠️ {failed}개 실패" if failed else ""))
+            st.session_state.pdf_cards = None
+            sync()
+            st.rerun()
