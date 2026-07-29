@@ -981,40 +981,43 @@ elif page == "🛠️ 카드 관리":
 elif page == "📄 PDF 가져오기":
     st.caption("문제 4개(2x2) → 답 4개(2x2) 순서로 페이지가 이어지는 '암기카드' PDF를 업로드하면 "
                "카드를 자동으로 추출합니다. 앞면은 텍스트로, 뒷면은 표/그림이 섞여 있어도 안전하도록 "
-               "이미지로 캡처해서 넣습니다.")
+               "이미지로만 캡처해서 넣습니다. PDF 한 개는 카테고리 한 개로 들어갑니다.")
 
     if "pdf_cards" not in st.session_state:
         st.session_state.pdf_cards = None
     if "pdf_review_idx" not in st.session_state:
         st.session_state.pdf_review_idx = 0
 
+    batch_category = st.text_input(
+        "이 PDF에 사용할 카테고리 이름",
+        key="pdf_batch_category",
+        placeholder="예: 건설_암기카드1",
+    ).strip()
+
     pdf_file = st.file_uploader("암기카드 PDF 업로드", ["pdf"], key="pdf_upload")
 
-    if st.button("🔍 PDF 분석하기", disabled=(pdf_file is None)):
+    if st.button("🔍 PDF 분석하기", disabled=(pdf_file is None or not batch_category)):
         with st.spinner("PDF에서 카드를 추출하는 중... (페이지가 많으면 시간이 걸릴 수 있어요)"):
             try:
                 extracted = extract_cards_from_pdf(pdf_file.getvalue())
+                for c in extracted:
+                    c["category"] = batch_category
             except Exception:
                 st.error("⚠️ PDF 분석에 실패했습니다. 파일 형식이나 레이아웃을 확인해주세요.")
                 extracted = None
         if extracted is not None:
             st.session_state.pdf_cards = extracted
             st.session_state.pdf_review_idx = 0
-            st.success(f"총 {len(extracted)}개의 카드를 찾았습니다. 아래에서 확인 후 저장하세요.")
+            st.success(f"총 {len(extracted)}개의 카드를 찾았습니다. 모두 '{batch_category}' 카테고리로 들어갑니다. 아래에서 확인 후 저장하세요.")
+
+    if pdf_file is None or not batch_category:
+        st.caption("⬆️ 카테고리 이름을 입력하고 PDF를 올려야 분석 버튼이 활성화됩니다.")
 
     cards = st.session_state.pdf_cards
     if cards:
         st.markdown("---")
         included = sum(1 for c in cards if c["include"])
-        st.caption(f"📚 추출된 카드 {len(cards)}개 · 저장 대상으로 선택된 카드 {included}개")
-
-        # 카테고리별 개수 요약
-        with st.expander("카테고리별 개수 보기", expanded=False):
-            cat_counts = {}
-            for c in cards:
-                cat_counts[c["category"]] = cat_counts.get(c["category"], 0) + 1
-            for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
-                st.write(f"- {cat}: {cnt}개")
+        st.caption(f"📚 추출된 카드 {len(cards)}개 · 저장 대상으로 선택된 카드 {included}개 · 카테고리: **{cards[0]['category']}**")
 
         # 한 장씩 확인하는 네비게이터
         st.session_state.pdf_review_idx = st.session_state.pdf_review_idx % len(cards)
@@ -1023,9 +1026,8 @@ elif page == "📄 PDF 가져오기":
 
         st.markdown(f"**카드 {idx + 1} / {len(cards)}** (PDF {card['src_pages'][0]}-{card['src_pages'][1]}페이지)")
 
-        card["category"] = st.text_input("카테고리", value=card["category"], key=f"pdf_cat_{idx}")
         card["front"] = st.text_area("앞면(문제)", value=card["front"], height=100, key=f"pdf_front_{idx}")
-        st.caption("뒷면(답) — PDF에서 캡처한 이미지 그대로 저장됩니다")
+        st.caption("뒷면(답) — PDF에서 캡처한 이미지 그대로 저장됩니다 (텍스트 없이 사진만)")
         st.image(card["back_image_bytes"], use_container_width=True)
         card["include"] = st.checkbox("✅ 이 카드를 저장 대상에 포함", value=card["include"], key=f"pdf_inc_{idx}")
 
@@ -1045,7 +1047,7 @@ elif page == "📄 PDF 가져오기":
                 st.rerun()
 
         st.markdown("---")
-        st.warning(f"'저장 실행'을 누르면 선택된 {included}개 카드가 Supabase에 실제로 추가됩니다.")
+        st.warning(f"'저장 실행'을 누르면 선택된 {included}개 카드가 '{cards[0]['category']}' 카테고리로 Supabase에 실제로 추가됩니다.")
         if st.button("💾 선택한 카드 전체 저장", type="primary"):
             to_save = [c for c in cards if c["include"]]
             progress = st.progress(0, text="저장 중...")
@@ -1054,7 +1056,7 @@ elif page == "📄 PDF 가져오기":
                 back_url = upload_image_bytes(
                     c["back_image_bytes"], "back", f"pdf_{c['src_pages'][0]}_{c['src_pages'][1]}.png"
                 )
-                ok = insert_card(c["category"], c["front"], "(PDF 이미지 참고)", None, back_url)
+                ok = insert_card(c["category"], c["front"], "", None, back_url)
                 if ok:
                     saved += 1
                 else:
