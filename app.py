@@ -7,6 +7,7 @@ import httpx
 import html
 from datetime import datetime, timezone
 from io import BytesIO
+from urllib.parse import urlparse, unquote
 from supabase import create_client
 from postgrest.exceptions import APIError
 import pdfplumber
@@ -223,10 +224,12 @@ div[role="radiogroup"] label:hover{
 }
 
 .flashcard-image{
-  width: 52%;
-  max-width: 320px;
-  min-width: 140px;
-  margin: 16px auto 0 auto;
+  width: 92%;
+  max-width: 700px;
+  min-width: 220px;
+  height: auto;
+  object-fit: contain;
+  margin: 18px auto 0 auto;
   display:block;
   border-radius: 14px;
   border: 1px solid var(--panel-border);
@@ -549,7 +552,7 @@ def extract_cards_from_pdf(file_bytes: bytes):
                 back_pos = _PDF_MIRROR_POS[pos]
                 bbox = _pdf_crop_bbox(apage, back_pos)
                 cropped = apage.crop(bbox)
-                img = cropped.to_image(resolution=200)
+                img = cropped.to_image(resolution=350, antialias=True)
                 buf = BytesIO()
                 img.original.save(buf, format="PNG")
                 cards.append({
@@ -594,9 +597,85 @@ def update_card(card_id, category, front, back, front_img, back_img):
         st.error("⚠️ 카드 수정에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
         return False
 
+def _storage_path_from_image_url(image_url: str):
+    """flashcard-images 버킷의 public URL에서 Storage 내부 경로만 안전하게 추출한다."""
+    if not image_url:
+        return None
+
+    try:
+        parsed = urlparse(str(image_url))
+        decoded_path = unquote(parsed.path or "")
+
+        # get_public_url()이 반환하는 일반적인 Supabase public URL 형식
+        markers = [
+            f"/storage/v1/object/public/{IMAGE_BUCKET}/",
+            f"/object/public/{IMAGE_BUCKET}/",
+        ]
+        for marker in markers:
+            if marker in decoded_path:
+                storage_path = decoded_path.split(marker, 1)[1].lstrip("/")
+                return storage_path or None
+
+        # 혹시 DB에 URL 대신 버킷 내부 경로(front/..., back/...)가 저장된 경우도 허용
+        raw = str(image_url).strip().lstrip("/")
+        if not parsed.scheme and raw.startswith(("front/", "back/")):
+            return unquote(raw)
+    except Exception:
+        return None
+
+    return None
+
+
+def _delete_images_from_storage(image_urls):
+    """유효한 이미지 URL들을 flashcard-images Storage에서 삭제한다.
+    DB 삭제 자체는 성공했는데 Storage 정리만 실패한 경우에는 False를 반환한다.
+    """
+    paths = []
+    for image_url in image_urls or []:
+        path = _storage_path_from_image_url(image_url)
+        if path and path not in paths:
+            paths.append(path)
+
+    if not paths:
+        return True
+
+    try:
+        # 한 번에 너무 많은 파일을 보내지 않도록 나누어 삭제
+        chunk_size = 100
+        for i in range(0, len(paths), chunk_size):
+            supabase.storage.from_(IMAGE_BUCKET).remove(paths[i:i + chunk_size])
+        return True
+    except Exception:
+        return False
+
+
 def delete_card(card_id):
+    image_urls = []
+
+    # 삭제 전에 이미지 URL을 확보한다. URL 조회가 실패해도 기존 카드 삭제 기능은 유지한다.
+    try:
+        rows = (
+            supabase.table(TABLE)
+            .select("front_image_url,back_image_url")
+            .eq("id", card_id)
+            .execute()
+            .data or []
+        )
+        for row in rows:
+            image_urls.extend([
+                row.get("front_image_url"),
+                row.get("back_image_url"),
+            ])
+    except Exception:
+        image_urls = []
+
     try:
         supabase.table(TABLE).delete().eq("id", card_id).execute()
+
+        storage_ok = _delete_images_from_storage(image_urls)
+        if image_urls and not storage_ok:
+            st.warning("⚠️ 카드는 삭제됐지만 연결된 이미지 일부를 Storage에서 지우지 못했습니다. Storage 삭제 권한을 확인해주세요.")
+
         auto_backup()
         clear_cards_cache()
         return True
@@ -626,8 +705,32 @@ def reset_wrong_by_category(category):
         st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
 def delete_category(category: str):
+    image_urls = []
+
+    # 카테고리의 카드를 지우기 전에 연결된 모든 이미지 URL을 확보한다.
+    try:
+        rows = (
+            supabase.table(TABLE)
+            .select("front_image_url,back_image_url")
+            .eq("category", category)
+            .execute()
+            .data or []
+        )
+        for row in rows:
+            image_urls.extend([
+                row.get("front_image_url"),
+                row.get("back_image_url"),
+            ])
+    except Exception:
+        image_urls = []
+
     try:
         supabase.table(TABLE).delete().eq("category", category).execute()
+
+        storage_ok = _delete_images_from_storage(image_urls)
+        if image_urls and not storage_ok:
+            st.warning("⚠️ 카테고리는 삭제됐지만 연결된 이미지 일부를 Storage에서 지우지 못했습니다. Storage 삭제 권한을 확인해주세요.")
+
         auto_backup()
         clear_cards_cache()
         return True
