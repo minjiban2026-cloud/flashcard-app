@@ -327,7 +327,7 @@ def clear_cards_cache():
         pass
 
 # =======================
-# 👤 학습자별 진행 기록 (간격 반복용)
+# 👤 학습자별 진행 기록 (오답 기록용)
 # - flashcard_app 은 여러 학습자가 함께 쓰는 "공용 카드"이므로,
 #   오답 횟수/마지막으로 본 시각은 별도 테이블(flashcard_progress)에
 #   학습자별로 따로 저장한다.
@@ -934,21 +934,6 @@ elif page == "🧠 암기 모드":
         p = st.session_state.progress_map.get(card_id)
         return int(p["wrong_count"]) if p else 0
 
-    def _learner_last_reviewed(card_id):
-        p = st.session_state.progress_map.get(card_id)
-        return p.get("last_reviewed_at") if p else None
-
-    def _days_since(iso_str):
-        if not iso_str:
-            return 9999.0  # 한 번도 안 본 카드는 최우선으로
-        try:
-            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-            if dt.tzinfo is not None:
-                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-            return max((datetime.utcnow() - dt).total_seconds() / 86400, 0.0)
-        except Exception:
-            return 9999.0
-
     def _mark_reviewed(card_id, mark_wrong=False):
         cur = _learner_wrong(card_id)
         new_wrong = cur + 1 if mark_wrong else cur
@@ -976,7 +961,7 @@ elif page == "🧠 암기 모드":
     with c1:
         order_mode = st.selectbox(
             "정렬",
-            ["🔀 랜덤", "🧠 추천순(간격 반복)", "➡️ 기본순"],
+            ["🔀 랜덤", "➡️ 기본순"],
             key="study_order_mode",
         )
     with c2:
@@ -986,10 +971,7 @@ elif page == "🧠 암기 모드":
     with c4:
         recall_mode = st.checkbox("🧠 회상 모드")
 
-    st.caption(
-        "회상 모드: 설명을 보고 해당 개념을 떠올리는 연습  ·  "
-        "추천순: 안 본 지 오래됐거나 많이 틀린 카드부터 보여줍니다 (학습자별 기록 기준)"
-    )
+    st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
 
     q = st.text_input(
         "🔎 검색",
@@ -1037,12 +1019,6 @@ elif page == "🧠 암기 모드":
             st.session_state.show_back = False
 
         order = st.session_state.order
-    elif order_mode == "🧠 추천순(간격 반복)":
-        # 틀린 횟수가 많을수록, 안 본 지 오래될수록 앞쪽으로
-        def _priority(cid):
-            return -(_learner_wrong(cid) * 2 + _days_since(_learner_last_reviewed(cid)))
-        order = sorted(ids, key=_priority)
-        st.session_state.order = []
     else:
         order = ids
         st.session_state.order = []
@@ -1074,12 +1050,10 @@ elif page == "🧠 암기 모드":
     safe_text = render_safe_text(text)
 
     wc = _learner_wrong(card["id"])
-    lr = _learner_last_reviewed(card["id"])
-    lr_caption = "안 본 기록 없음" if not lr else f"{_days_since(lr):.1f}일 전에 봄"
     pct = int(round((st.session_state.index + 1) / max(len(order), 1) * 100))
     st.markdown(
         f'<div class="progress-meta">{st.session_state.index + 1} / {len(order)}'
-        f' · 나의 오답 {wc}회 · {lr_caption}</div>'
+        f' · 나의 오답 {wc}회</div>'
         f'<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:{pct}%"></div></div>',
         unsafe_allow_html=True
     )
