@@ -577,8 +577,9 @@ def insert_card(category, front, back, front_img, back_img):
         auto_backup()
         clear_cards_cache()
         return True
-    except Exception:
-        st.error("⚠️ 카드 저장에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+    except Exception as e:
+        # 실제 Supabase 오류 내용을 함께 보여줘 원인을 바로 확인할 수 있게 한다.
+        st.error(f"⚠️ 카드 저장에 실패했습니다.\n\n오류 내용: {e}")
         return False
 
 def update_card(card_id, category, front, back, front_img, back_img):
@@ -1151,6 +1152,13 @@ elif page == "🧠 암기 모드":
     img = second_img if st.session_state.show_back else first_img
 
     safe_text = render_safe_text(text)
+    # 뒷면 텍스트가 비어 있는 PDF 카드는 빈 텍스트 영역 자체를 만들지 않는다.
+    # 따라서 답안 이미지만 있을 때 이미지가 불필요하게 아래로 밀리지 않는다.
+    text_html = (
+        f'<div class="flashcard-text">{safe_text}</div>'
+        if (text or "").strip()
+        else ""
+    )
 
     wc = _learner_wrong(card["id"])
     pct = int(round((st.session_state.index + 1) / max(len(order), 1) * 100))
@@ -1165,7 +1173,7 @@ elif page == "🧠 암기 모드":
         f"""
         <div class="flashcard">
             <div class="flashcard-label">{html.escape(label)}</div>
-            <div class="flashcard-text">{safe_text}</div>
+            {text_html}
             {"<img src='" + img + "' class='flashcard-image' />" if img else ""}
         </div>
         """,
@@ -1465,11 +1473,27 @@ elif page == "📄 PDF 가져오기":
                 back_url = upload_image_bytes(
                     c["back_image_bytes"], "back", f"pdf_{c['src_pages'][0]}_{c['src_pages'][1]}.png"
                 )
-                ok = insert_card(c["category"], c["front"], "", None, back_url)
+                if not back_url:
+                    st.warning(f"⚠️ 카드 {n}: 답안 이미지 업로드에 실패하여 카드 저장을 건너뜁니다.")
+                    ok = False
+                else:
+                    # PDF 카드는 답이 이미지에 있으므로 back 텍스트는 빈 문자열로 저장한다.
+                    # 화면에서는 빈 텍스트 영역을 렌더링하지 않아 이미지가 위쪽에 표시된다.
+                    ok = insert_card(
+                        c["category"],
+                        c["front"],
+                        "",
+                        None,
+                        back_url,
+                    )
+
                 if ok:
                     saved += 1
                 else:
                     failed += 1
+                    # 이미지 업로드 후 DB 저장만 실패했으면 고아 파일이 남지 않도록 즉시 정리한다.
+                    if back_url:
+                        _delete_images_from_storage([back_url])
                 progress.progress(n / len(to_save), text=f"저장 중... ({n}/{len(to_save)})")
             progress.empty()
             st.success(f"✅ {saved}개 저장 완료" + (f" · ⚠️ {failed}개 실패" if failed else ""))
