@@ -795,6 +795,156 @@ def _restore_images_for_cards(cards):
     return _restore_archived_paths(paths)
 
 
+# =======================
+# 🧹 Storage 고아 이미지 검사/정리
+# - 현재 카드 DB의 front_image_url/back_image_url과 Storage의 front/, back/를 비교한다.
+# - 어떤 카드도 참조하지 않는 파일만 후보로 표시한다.
+# - 실제 정리 직전에 DB를 다시 읽어 재검증하므로, 검사 후 새로 연결된 이미지는 건드리지 않는다.
+# - 영구 삭제하지 않고 trash/orphans/<배치ID>/원래경로로 이동한다.
+# =======================
+def _referenced_image_paths(cards=None):
+    cards = fetch_cards() if cards is None else cards
+    refs = set()
+    for c in cards or []:
+        for key in ("front_image_url", "back_image_url"):
+            path = _storage_path_from_image_url(c.get(key))
+            if path and path.startswith(("front/", "back/")):
+                refs.add(path)
+    return refs
+
+
+def _list_storage_files_direct(folder: str):
+    """Storage의 한 폴더 바로 아래 파일을 페이지 단위로 조회한다.
+
+    현재 앱은 front/<파일>, back/<파일> 형태로 저장하므로 두 폴더의 직접 파일만 조사한다.
+    trash/는 검사 대상에서 제외된다.
+    """
+    files = []
+    offset = 0
+    limit = 1000
+
+    while True:
+        try:
+            items = supabase.storage.from_(IMAGE_BUCKET).list(
+                path=folder,
+                options={
+                    "limit": limit,
+                    "offset": offset,
+                    "sortBy": {"column": "name", "order": "asc"},
+                },
+            ) or []
+        except TypeError:
+            # supabase-py 버전에 따라 positional argument만 허용하는 경우 대응
+            try:
+                items = supabase.storage.from_(IMAGE_BUCKET).list(
+                    folder,
+                    {"limit": limit, "offset": offset},
+                ) or []
+            except TypeError:
+                items = supabase.storage.from_(IMAGE_BUCKET).list(folder) or []
+        except Exception as e:
+            raise RuntimeError(f"Storage '{folder}/' 목록 조회 실패: {e}") from e
+
+        file_names = []
+        for item in items:
+            name = item.get("name") if isinstance(item, dict) else None
+            if not name or name == ".emptyFolderPlaceholder":
+                continue
+
+            # 폴더 항목은 metadata가 없거나 id가 없는 경우가 많다. 현재 폴더는 파일만 있어야 하지만
+            # 혹시 하위 폴더가 섞여 있으면 안전하게 제외한다.
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            item_id = item.get("id") if isinstance(item, dict) else None
+            if metadata is None and item_id is None:
+                continue
+
+            file_names.append(name)
+
+        files.extend(f"{folder}/{name}" for name in file_names)
+
+        # 페이지 옵션을 지원하지 않는 구버전에서는 첫 호출에서 전체가 반환된다.
+        if len(items) < limit:
+            break
+        offset += limit
+
+    return files
+
+
+def scan_orphan_images():
+    """현재 카드가 참조하지 않는 front/back Storage 파일 목록을 반환한다."""
+    cards = fetch_cards_safe()
+    if cards is None:
+        raise RuntimeError("현재 카드 DB를 읽지 못해 검사를 중단했습니다.")
+
+    referenced = _referenced_image_paths(cards)
+    stored = set(_list_storage_files_direct("front")) | set(_list_storage_files_direct("back"))
+    orphan_paths = sorted(stored - referenced)
+
+    return {
+        "orphan_paths": orphan_paths,
+        "stored_count": len(stored),
+        "referenced_count": len(referenced),
+        "scanned_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def archive_orphan_images(candidate_paths):
+    """후보를 다시 검증하고 여전히 미사용인 파일만 고아 이미지 휴지통으로 옮긴다.
+
+    성공 시 (True, 이동목록, 제외목록), 실패 시 (False, [], 제외목록)를 반환한다.
+    중간 실패가 발생하면 이번 실행에서 이미 이동한 파일을 원래 위치로 되돌린다.
+    """
+    cards = fetch_cards_safe()
+    if cards is None:
+        st.error("⚠️ 현재 카드 DB를 다시 읽지 못해 정리를 중단했습니다.")
+        return False, [], []
+
+    current_refs = _referenced_image_paths(cards)
+    safe_candidates = []
+    skipped = []
+
+    for path in sorted(set(candidate_paths or [])):
+        if not path.startswith(("front/", "back/")):
+            skipped.append(path)
+            continue
+        if path in current_refs:
+            skipped.append(path)
+            continue
+        safe_candidates.append(path)
+
+    batch_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    moved = []  # [(원본, 휴지통)]
+
+    for path in safe_candidates:
+        # 검사 이후 이미 없어졌다면 오류가 아니라 건너뛴 것으로 처리한다.
+        if _storage_download(path) is None:
+            skipped.append(path)
+            continue
+
+        trash_path = f"trash/orphans/{batch_id}/{path}"
+        ok, err = _storage_move(path, trash_path)
+        if not ok:
+            # 이번 실행에서 이동한 파일만 역순 복원
+            rollback_failed = []
+            for original, archived in reversed(moved):
+                restore_ok, restore_err = _storage_move(archived, original)
+                if not restore_ok:
+                    rollback_failed.append(f"{archived} → {original}: {restore_err}")
+
+            extra = ""
+            if rollback_failed:
+                extra = "\n\n복원 실패 항목:\n" + "\n".join(rollback_failed)
+            st.error(
+                "⚠️ 고아 이미지 휴지통 이동 중 오류가 발생해 작업을 중단했습니다.\n\n"
+                f"원본: {path}\n\n휴지통: {trash_path}\n\n오류: {err}{extra}"
+            )
+            return False, [], skipped
+
+        moved.append((path, trash_path))
+
+    return True, moved, skipped
+
+
 def _delete_progress_for_card_ids(card_ids):
     if not card_ids:
         return True
@@ -1532,6 +1682,76 @@ elif page == "🛠️ 카드 관리":
                 sync()
                 st.success(f"삭제 완료: '{target_cat}' 카테고리의 카드가 모두 삭제되었습니다.")
                 st.rerun()
+
+    st.markdown("---")
+    with st.expander("🧹 사용하지 않는 이미지 검사/정리", expanded=False):
+        st.caption(
+            "현재 카드 DB가 참조하는 이미지와 Storage의 front/, back/ 파일을 비교합니다. "
+            "어떤 카드에도 연결되지 않은 파일만 후보로 표시하며, 확인 전에는 아무 파일도 이동하지 않습니다."
+        )
+        st.info("trash/ 폴더와 현재 카드가 사용 중인 이미지는 검사·정리 대상에서 제외됩니다.")
+
+        if "orphan_scan_result" not in st.session_state:
+            st.session_state.orphan_scan_result = None
+
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            if st.button("🔍 고아 이미지 검사", use_container_width=True):
+                try:
+                    with st.spinner("Storage와 카드 DB를 비교하는 중..."):
+                        st.session_state.orphan_scan_result = scan_orphan_images()
+                except Exception as e:
+                    st.session_state.orphan_scan_result = None
+                    st.error(f"⚠️ 고아 이미지 검사에 실패했습니다: {e}")
+
+        with oc2:
+            if st.button("🧽 검사 결과 지우기", use_container_width=True):
+                st.session_state.orphan_scan_result = None
+                st.rerun()
+
+        orphan_result = st.session_state.orphan_scan_result
+        if orphan_result:
+            orphan_paths = orphan_result.get("orphan_paths") or []
+            st.caption(
+                f"검사 시각: {orphan_result.get('scanned_at', '-')} · "
+                f"Storage 파일 {orphan_result.get('stored_count', 0)}개 · "
+                f"DB에서 참조 중인 고유 이미지 {orphan_result.get('referenced_count', 0)}개"
+            )
+
+            if not orphan_paths:
+                st.success("✅ 현재 front/와 back/에는 사용하지 않는 이미지가 없습니다.")
+            else:
+                st.warning(f"현재 어떤 카드에서도 사용하지 않는 이미지 {len(orphan_paths)}개를 찾았습니다.")
+                st.code("\n".join(orphan_paths), language=None)
+                st.caption(
+                    "정리 실행 시에도 카드 DB를 다시 조회합니다. 검사 후 새 카드에 연결된 이미지는 자동으로 제외되고, "
+                    "나머지만 trash/orphans/ 아래로 이동합니다."
+                )
+
+                orphan_confirm = st.checkbox(
+                    f"위 {len(orphan_paths)}개 후보를 다시 검증한 후, 미사용 파일만 휴지통으로 이동합니다.",
+                    key="orphan_cleanup_confirm",
+                )
+
+                if st.button(
+                    "🗑️ 미사용 이미지를 휴지통으로 이동",
+                    type="primary",
+                    disabled=not orphan_confirm,
+                    use_container_width=True,
+                ):
+                    with st.spinner("최신 카드 DB를 다시 확인하고 안전하게 이동하는 중..."):
+                        ok, moved, skipped = archive_orphan_images(orphan_paths)
+
+                    if ok:
+                        st.session_state.orphan_scan_result = None
+                        st.success(f"✅ 미사용 이미지 {len(moved)}개를 휴지통으로 이동했습니다.")
+                        if skipped:
+                            st.info(
+                                f"검사 이후 사용되기 시작했거나 이미 없어진 파일 {len(skipped)}개는 건드리지 않았습니다."
+                            )
+                        if moved:
+                            st.caption("이동 위치")
+                            st.code("\n".join(f"{src}  →  {dst}" for src, dst in moved), language=None)
 
     st.markdown("---")
     with st.expander("♻️ 백업 복구 (전체 덮어쓰기)", expanded=False):
