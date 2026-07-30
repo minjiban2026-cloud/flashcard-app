@@ -294,7 +294,8 @@ def manual_backup_now():
             file_options={"content-type": "application/json"},
         )
         return True
-    except:
+    except Exception as e:
+        st.error(f"⚠️ 수동 백업 생성 실패: {e}")
         return False
 
 def safe_filename(name: str) -> str:
