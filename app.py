@@ -33,34 +33,84 @@ st.set_page_config(
 )
 
 # =======================
-# 🎨 UI 스타일 (수정 금지 영역)
+# 🎨 UI 스타일
 # =======================
-st.markdown("""
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+_top_l, _top_r = st.columns([6, 1])
+with _top_r:
+    st.session_state.dark_mode = st.toggle(
+        "🌙", value=st.session_state.dark_mode, key="dark_mode_toggle",
+        help="다크 모드 켜기/끄기",
+    )
+
+if st.session_state.dark_mode:
+    _bg_gradient = (
+        "radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.16), transparent 55%),"
+        "radial-gradient(900px 520px at 90% 10%, rgba(167,139,250,0.14), transparent 55%),"
+        "linear-gradient(180deg, #0b1120 0%, #131c33 100%)"
+    )
+    _vars = dict(
+        card="#151f34", text="#e7ecf7", muted="#93a1c2", line="#283652",
+        brand="#8b8ff8", brand2="#c19dfb",
+        panel="rgba(21,31,52,0.75)", panel_border="rgba(40,54,82,0.9)",
+        input_bg="#101828", shadow="0 18px 40px rgba(0,0,0,0.45)", shadow2="0 10px 22px rgba(0,0,0,0.35)",
+    )
+else:
+    _bg_gradient = (
+        "radial-gradient(1200px 600px at 20% 0%, rgba(79,70,229,0.10), transparent 55%),"
+        "radial-gradient(900px 520px at 90% 10%, rgba(124,58,237,0.10), transparent 55%),"
+        "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)"
+    )
+    _vars = dict(
+        card="#ffffff", text="#0f172a", muted="#64748b", line="#e5e7eb",
+        brand="#4f46e5", brand2="#7c3aed",
+        panel="rgba(255,255,255,0.7)", panel_border="rgba(229,231,235,0.8)",
+        input_bg="#ffffff", shadow="0 18px 40px rgba(2,6,23,0.10)", shadow2="0 10px 22px rgba(2,6,23,0.08)",
+    )
+
+_CATEGORY_PALETTE_LIGHT = [
+    ("#eef2ff", "#4338ca"), ("#ecfdf5", "#047857"), ("#fff7ed", "#c2410c"),
+    ("#fdf2f8", "#be185d"), ("#eff6ff", "#1d4ed8"), ("#f0fdfa", "#0f766e"),
+    ("#fef2f2", "#b91c1c"), ("#f5f3ff", "#6d28d9"),
+]
+_CATEGORY_PALETTE_DARK = [
+    ("#312e81", "#c7d2fe"), ("#064e3b", "#a7f3d0"), ("#7c2d12", "#fed7aa"),
+    ("#831843", "#fbcfe8"), ("#1e3a8a", "#bfdbfe"), ("#134e4a", "#99f6e4"),
+    ("#7f1d1d", "#fecaca"), ("#4c1d95", "#ddd6fe"),
+]
+
+def category_color(cat: str):
+    palette = _CATEGORY_PALETTE_DARK if st.session_state.dark_mode else _CATEGORY_PALETTE_LIGHT
+    idx = sum(ord(ch) for ch in (cat or "")) % len(palette)
+    return palette[idx]
+
+_CSS_TEMPLATE = """
 <style>
 :root{
-  --bg1:#f8fafc;
-  --bg2:#eef2ff;
-  --card:#ffffff;
-  --text:#0f172a;
-  --muted:#64748b;
-  --line:#e5e7eb;
-  --brand:#4f46e5;
-  --brand2:#7c3aed;
-  --shadow: 0 18px 40px rgba(2,6,23,0.10);
-  --shadow2: 0 10px 22px rgba(2,6,23,0.08);
+  --card:__CARD__;
+  --text:__TEXT__;
+  --muted:__MUTED__;
+  --line:__LINE__;
+  --brand:__BRAND__;
+  --brand2:__BRAND2__;
+  --panel:__PANEL__;
+  --panel-border:__PANEL_BORDER__;
+  --input-bg:__INPUT_BG__;
+  --shadow: __SHADOW__;
+  --shadow2: __SHADOW2__;
 }
 
 .stApp{
-  background: radial-gradient(1200px 600px at 20% 0%, rgba(79,70,229,0.10), transparent 55%),
-              radial-gradient(900px 520px at 90% 10%, rgba(124,58,237,0.10), transparent 55%),
-              linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
-  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  background: __BG_GRADIENT__;
+  font-family: "Pretendard", "Apple SD Gothic Neo", -apple-system, BlinkMacSystemFont, "Noto Sans KR", sans-serif;
   color: var(--text);
 }
 
 .block-container{
   max-width: 760px;
-  padding-top: 1.25rem;
+  padding-top: 1rem;
   padding-bottom: 4rem;
 }
 
@@ -69,26 +119,47 @@ st.markdown("""
   align-items:center;
   justify-content:center;
   gap:10px;
-  font-size: 26px;
+  font-size: 27px;
   font-weight: 900;
   letter-spacing: -0.4px;
-  margin: 0 0 0.7rem 0;
+  margin: 0 0 0.8rem 0;
+  color: var(--text);
 }
 
 div[role="radiogroup"]{
-  background: rgba(255,255,255,0.7);
-  border: 1px solid rgba(229,231,235,0.8);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
   border-radius: 999px;
   padding: 10px 14px;
   box-shadow: var(--shadow2);
+}
+div[role="radiogroup"] label{
+  color: var(--text) !important;
+  transition: transform .15s ease;
+}
+div[role="radiogroup"] label:hover{
+  transform: translateY(-1px);
 }
 
 .stTextInput input,
 .stTextArea textarea,
 .stSelectbox [data-baseweb="select"]{
   border-radius: 14px !important;
-  border: 1px solid rgba(229,231,235,0.95) !important;
+  border: 1px solid var(--panel-border) !important;
+  background: var(--input-bg) !important;
+  color: var(--text) !important;
   box-shadow: 0 1px 0 rgba(2,6,23,0.03) !important;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.stTextInput input:focus,
+.stTextArea textarea:focus{
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.15) !important;
+}
+
+@keyframes flashcardIn {
+  0%   { opacity: 0; transform: perspective(900px) rotateY(-10deg) translateY(8px) scale(0.97); }
+  100% { opacity: 1; transform: perspective(900px) rotateY(0deg) translateY(0) scale(1); }
 }
 
 .flashcard{
@@ -103,7 +174,9 @@ div[role="radiogroup"]{
   display:flex;
   flex-direction:column;
   justify-content:center;
-  border: 1px solid rgba(229,231,235,0.65);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  animation: flashcardIn .38s cubic-bezier(.22,1,.36,1);
 }
 
 .flashcard-label{
@@ -112,18 +185,41 @@ div[role="radiogroup"]{
   font-size: 12px;
   font-weight: 800;
   color: var(--brand);
-  background: rgba(79,70,229,0.10);
-  border: 1px solid rgba(79,70,229,0.18);
+  background: rgba(124,58,237,0.12);
+  border: 1px solid rgba(124,58,237,0.22);
   padding: 4px 10px;
   border-radius: 999px;
   margin-bottom: 12px;
 }
 
-.progress{
+.cat-chip{
+  display:inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  margin: -4px 0 10px 0;
+}
+
+.progress-meta{
   font-size: 12px;
   color: var(--muted);
   text-align: right;
-  margin: 2px 2px 8px 2px;
+  margin: 2px 2px 4px 2px;
+}
+
+.progress-bar-wrap{
+  height: 6px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 0 2px 10px 2px;
+}
+.progress-bar-fill{
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand), var(--brand2));
+  border-radius: 999px;
+  transition: width .3s ease;
 }
 
 .flashcard-image{
@@ -133,7 +229,7 @@ div[role="radiogroup"]{
   margin: 16px auto 0 auto;
   display:block;
   border-radius: 14px;
-  border: 1px solid rgba(229,231,235,0.9);
+  border: 1px solid var(--panel-border);
   box-shadow: 0 8px 18px rgba(2,6,23,0.08);
 }
 
@@ -145,23 +241,33 @@ div[role="radiogroup"]{
   border-radius: 14px !important;
   padding: 10px 14px !important;
   font-weight: 800 !important;
-  border: 1px solid rgba(229,231,235,0.95) !important;
-  box-shadow: 0 10px 22px rgba(2,6,23,0.06);
+  border: 1px solid var(--panel-border) !important;
+  box-shadow: var(--shadow2);
+  transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+.stButton button:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+.stButton button:active{
+  transform: translateY(0);
 }
 
-div[data-testid="stFormSubmitButton"] > button{
+div[data-testid="stFormSubmitButton"] > button,
+.stButton button[kind="primary"]{
   background: linear-gradient(135deg, var(--brand), var(--brand2)) !important;
   color: white !important;
   border: none !important;
 }
-div[data-testid="stFormSubmitButton"] > button:hover{
+div[data-testid="stFormSubmitButton"] > button:hover,
+.stButton button[kind="primary"]:hover{
   opacity: 0.93;
   transform: translateY(-1px);
 }
 
 details{
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(229,231,235,0.85);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
   border-radius: 16px;
   padding: 8px 12px;
   box-shadow: var(--shadow2);
@@ -171,11 +277,31 @@ details > summary{
   color: var(--text);
 }
 
-.stCaption{
+.stCaption, [data-testid="stCaptionContainer"]{
   color: var(--muted) !important;
 }
+
+.stProgress > div > div{
+  background: linear-gradient(90deg, var(--brand), var(--brand2)) !important;
+}
 </style>
-""", unsafe_allow_html=True)
+"""
+
+_css = (_CSS_TEMPLATE
+    .replace("__CARD__", _vars["card"])
+    .replace("__TEXT__", _vars["text"])
+    .replace("__MUTED__", _vars["muted"])
+    .replace("__LINE__", _vars["line"])
+    .replace("__BRAND__", _vars["brand"])
+    .replace("__BRAND2__", _vars["brand2"])
+    .replace("__PANEL_BORDER__", _vars["panel_border"])
+    .replace("__PANEL__", _vars["panel"])
+    .replace("__INPUT_BG__", _vars["input_bg"])
+    .replace("__SHADOW2__", _vars["shadow2"])
+    .replace("__SHADOW__", _vars["shadow"])
+    .replace("__BG_GRADIENT__", _bg_gradient)
+)
+st.markdown(_css, unsafe_allow_html=True)
 
 # =======================
 # DB 유틸
@@ -840,6 +966,11 @@ elif page == "🧠 암기 모드":
         st.stop()
 
     cat = st.selectbox("카테고리", cat_list)
+    _chip_bg, _chip_fg = category_color(cat)
+    st.markdown(
+        f'<span class="cat-chip" style="background:{_chip_bg};color:{_chip_fg};">{html.escape(cat)}</span>',
+        unsafe_allow_html=True,
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -945,9 +1076,11 @@ elif page == "🧠 암기 모드":
     wc = _learner_wrong(card["id"])
     lr = _learner_last_reviewed(card["id"])
     lr_caption = "안 본 기록 없음" if not lr else f"{_days_since(lr):.1f}일 전에 봄"
+    pct = int(round((st.session_state.index + 1) / max(len(order), 1) * 100))
     st.markdown(
-        f'<div class="progress">{st.session_state.index + 1} / {len(order)}'
-        f' · 나의 오답 {wc}회 · {lr_caption}</div>',
+        f'<div class="progress-meta">{st.session_state.index + 1} / {len(order)}'
+        f' · 나의 오답 {wc}회 · {lr_caption}</div>'
+        f'<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:{pct}%"></div></div>',
         unsafe_allow_html=True
     )
 
