@@ -706,9 +706,23 @@ def _content_type_from_path(path: str):
     return "application/octet-stream"
 
 
+def _storage_move(from_path: str, to_path: str):
+    """Supabase Storage의 native move API를 사용한다.
+    성공 시 (True, None), 실패 시 (False, 오류문구)를 반환한다.
+    """
+    try:
+        supabase.storage.from_(IMAGE_BUCKET).move(from_path, to_path)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 def _archive_image_paths(image_urls):
     """이미지를 영구 삭제하지 않고 trash/원래경로로 이동한다.
-    중간 실패 시 이미 옮긴 파일을 원래 위치로 되돌려 데이터 손실을 막는다.
+
+    기존의 다운로드→재업로드→삭제 방식은 파일 크기·업로드 옵션·응답 처리에 따라
+    실패할 수 있으므로 Supabase의 native move API를 사용한다.
+    중간 실패 시 이미 이동한 파일은 원래 위치로 되돌린다.
     """
     paths = []
     for url in image_urls or []:
@@ -718,49 +732,56 @@ def _archive_image_paths(image_urls):
 
     archived = []
     for path in paths:
-        data = _storage_download(path)
-        if data is None:
-            # 이미 없는 파일은 카드 삭제를 막지 않는다.
+        # 원본이 이미 없으면 삭제를 막지 않는다.
+        if _storage_download(path) is None:
             continue
+
         trash_path = f"trash/{path}"
-        # 과거 동일 경로 휴지통 파일이 있으면 먼저 제거한다.
-        try:
-            supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
-        except Exception:
-            pass
-        if not _storage_upload(trash_path, data, _content_type_from_path(path)):
-            _restore_archived_paths(archived)
-            return False, []
-        try:
-            supabase.storage.from_(IMAGE_BUCKET).remove([path])
-        except Exception:
+
+        # 같은 경로의 예전 휴지통 파일이 있으면 먼저 제거한다.
+        if _storage_download(trash_path) is not None:
             try:
                 supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
-            except Exception:
-                pass
+            except Exception as e:
+                _restore_archived_paths(archived)
+                st.error(f"⚠️ 기존 휴지통 이미지 정리에 실패했습니다.\n\n경로: {trash_path}\n\n오류: {e}")
+                return False, []
+
+        ok, err = _storage_move(path, trash_path)
+        if not ok:
             _restore_archived_paths(archived)
+            st.error(
+                "⚠️ Storage 이미지 이동 실패\n\n"
+                f"원본: {path}\n\n휴지통: {trash_path}\n\n오류: {err}"
+            )
             return False, []
+
         archived.append(path)
+
     return True, archived
 
 
 def _restore_archived_paths(paths):
-    """trash/에 보관된 파일을 원래 경로로 되돌린다."""
+    """trash/에 보관된 파일을 native move API로 원래 경로에 되돌린다."""
     all_ok = True
-    for path in paths or []:
+    for path in reversed(paths or []):
         trash_path = f"trash/{path}"
-        data = _storage_download(trash_path)
-        if data is None:
+
+        if _storage_download(trash_path) is None:
             continue
-        # 원본이 이미 존재하면 덮어쓰지 않는다.
-        if _storage_download(path) is None:
-            if not _storage_upload(path, data, _content_type_from_path(path)):
+
+        # 원본이 이미 있으면 휴지통 사본만 정리한다.
+        if _storage_download(path) is not None:
+            try:
+                supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
+            except Exception:
                 all_ok = False
-                continue
-        try:
-            supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
-        except Exception:
+            continue
+
+        ok, _ = _storage_move(trash_path, path)
+        if not ok:
             all_ok = False
+
     return all_ok
 
 
