@@ -21,6 +21,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 TABLE = "flashcard_app"
 PROGRESS_TABLE = "flashcard_progress"
+LEARNERS_TABLE = "flashcard_learners"
 BACKUP_BUCKET = "flashcard-backup"
 IMAGE_BUCKET = "flashcard-images"
 
@@ -339,13 +340,60 @@ def normalize_learner_name(name: str) -> str:
     """앞뒤 공백 제거 + 중간 연속 공백을 하나로 합쳐서 '민수'와 '민수 '를 같은 사람으로 취급"""
     return re.sub(r"\s+", " ", (name or "").strip())
 
+def learners_table_available():
+    """학습자 전용 테이블 사용 가능 여부. 테이블이 없으면 기존 진행 기록 방식으로 안전하게 폴백한다."""
+    try:
+        supabase.table(LEARNERS_TABLE).select("learner").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def register_learner(name: str):
+    """학습자 이름을 카드 진행 기록과 독립적으로 영구 보존한다."""
+    name = normalize_learner_name(name)
+    if not name:
+        return False
+    try:
+        supabase.table(LEARNERS_TABLE).upsert(
+            {"learner": name}, on_conflict="learner"
+        ).execute()
+        return True
+    except Exception:
+        # 전용 테이블을 아직 만들지 않은 기존 설치에서도 앱 자체는 계속 동작한다.
+        return False
+
+
 def fetch_known_learners():
+    names = set()
+    try:
+        res = supabase.table(LEARNERS_TABLE).select("learner").execute().data or []
+        names.update(normalize_learner_name(r.get("learner")) for r in res if r.get("learner"))
+    except Exception:
+        pass
+
+    # 기존 사용자 자동 마이그레이션 및 전용 테이블 미설치 폴백
     try:
         res = supabase.table(PROGRESS_TABLE).select("learner").execute().data or []
-        names = {normalize_learner_name(r["learner"]) for r in res if r.get("learner")}
-        return sorted(n for n in names if n)
+        progress_names = {
+            normalize_learner_name(r.get("learner")) for r in res if r.get("learner")
+        }
+        names.update(progress_names)
+        for name in progress_names:
+            if name:
+                register_learner(name)
     except Exception:
-        return []
+        pass
+
+    return sorted(n for n in names if n)
+
+
+def fetch_learner_rows():
+    try:
+        return supabase.table(LEARNERS_TABLE).select("*").execute().data or []
+    except Exception:
+        return [{"learner": n} for n in fetch_known_learners()]
+
 
 def fetch_progress_map(learner):
     """{card_id: {"wrong_count":.., "last_reviewed_at":..}} 형태로 반환"""
@@ -397,6 +445,7 @@ def _build_backup_payload():
     return {
         "cards": fetch_cards(),
         "progress": fetch_progress_rows(),
+        "learners": fetch_learner_rows(),
     }
 
 def auto_backup():
@@ -564,7 +613,7 @@ def extract_cards_from_pdf(file_bytes: bytes):
                 })
     return cards
 
-def insert_card(category, front, back, front_img, back_img):
+def insert_card(category, front, back, front_img, back_img, make_backup=True):
     try:
         supabase.table(TABLE).insert({
             "category": category,
@@ -574,7 +623,8 @@ def insert_card(category, front, back, front_img, back_img):
             "back_image_url": back_img,
             "wrong_count": 0
         }).execute()
-        auto_backup()
+        if make_backup:
+            auto_backup()
         clear_cards_cache()
         return True
     except Exception as e:
@@ -627,62 +677,149 @@ def _storage_path_from_image_url(image_url: str):
     return None
 
 
-def _delete_images_from_storage(image_urls):
-    """유효한 이미지 URL들을 flashcard-images Storage에서 삭제한다.
-    DB 삭제 자체는 성공했는데 Storage 정리만 실패한 경우에는 False를 반환한다.
+def _storage_download(path: str):
+    try:
+        data = supabase.storage.from_(IMAGE_BUCKET).download(path)
+        return data.read() if hasattr(data, "read") else data
+    except Exception:
+        return None
+
+
+def _storage_upload(path: str, data: bytes, content_type="application/octet-stream"):
+    try:
+        supabase.storage.from_(IMAGE_BUCKET).upload(
+            path, data, file_options={"content-type": content_type}
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _content_type_from_path(path: str):
+    p = (path or "").lower()
+    if p.endswith(".png"):
+        return "image/png"
+    if p.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if p.endswith(".webp"):
+        return "image/webp"
+    return "application/octet-stream"
+
+
+def _archive_image_paths(image_urls):
+    """이미지를 영구 삭제하지 않고 trash/원래경로로 이동한다.
+    중간 실패 시 이미 옮긴 파일을 원래 위치로 되돌려 데이터 손실을 막는다.
     """
     paths = []
-    for image_url in image_urls or []:
-        path = _storage_path_from_image_url(image_url)
-        if path and path not in paths:
-            paths.append(path)
+    for url in image_urls or []:
+        p = _storage_path_from_image_url(url)
+        if p and p not in paths:
+            paths.append(p)
 
-    if not paths:
+    archived = []
+    for path in paths:
+        data = _storage_download(path)
+        if data is None:
+            # 이미 없는 파일은 카드 삭제를 막지 않는다.
+            continue
+        trash_path = f"trash/{path}"
+        # 과거 동일 경로 휴지통 파일이 있으면 먼저 제거한다.
+        try:
+            supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
+        except Exception:
+            pass
+        if not _storage_upload(trash_path, data, _content_type_from_path(path)):
+            _restore_archived_paths(archived)
+            return False, []
+        try:
+            supabase.storage.from_(IMAGE_BUCKET).remove([path])
+        except Exception:
+            try:
+                supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
+            except Exception:
+                pass
+            _restore_archived_paths(archived)
+            return False, []
+        archived.append(path)
+    return True, archived
+
+
+def _restore_archived_paths(paths):
+    """trash/에 보관된 파일을 원래 경로로 되돌린다."""
+    all_ok = True
+    for path in paths or []:
+        trash_path = f"trash/{path}"
+        data = _storage_download(trash_path)
+        if data is None:
+            continue
+        # 원본이 이미 존재하면 덮어쓰지 않는다.
+        if _storage_download(path) is None:
+            if not _storage_upload(path, data, _content_type_from_path(path)):
+                all_ok = False
+                continue
+        try:
+            supabase.storage.from_(IMAGE_BUCKET).remove([trash_path])
+        except Exception:
+            all_ok = False
+    return all_ok
+
+
+def _restore_images_for_cards(cards):
+    paths = []
+    for c in cards or []:
+        for key in ("front_image_url", "back_image_url"):
+            p = _storage_path_from_image_url(c.get(key))
+            if p and p not in paths and _storage_download(p) is None:
+                paths.append(p)
+    return _restore_archived_paths(paths)
+
+
+def _delete_progress_for_card_ids(card_ids):
+    if not card_ids:
         return True
-
+    # 학습자 전용 테이블이 있을 때만 고아 진행 기록을 정리한다.
+    # 없으면 기존 이름 목록이 사라질 수 있으므로 진행 기록을 보존한다.
+    if not learners_table_available():
+        return True
     try:
-        # 한 번에 너무 많은 파일을 보내지 않도록 나누어 삭제
-        chunk_size = 100
-        for i in range(0, len(paths), chunk_size):
-            supabase.storage.from_(IMAGE_BUCKET).remove(paths[i:i + chunk_size])
+        for i in range(0, len(card_ids), 200):
+            supabase.table(PROGRESS_TABLE).delete().in_("card_id", card_ids[i:i+200]).execute()
         return True
     except Exception:
         return False
 
 
 def delete_card(card_id):
-    image_urls = []
-
-    # 삭제 전에 이미지 URL을 확보한다. URL 조회가 실패해도 기존 카드 삭제 기능은 유지한다.
+    """삭제 이미지는 휴지통에 보관하고, 카드 삭제 실패 시 이미지를 즉시 복원한다."""
     try:
-        rows = (
-            supabase.table(TABLE)
-            .select("front_image_url,back_image_url")
-            .eq("id", card_id)
-            .execute()
-            .data or []
-        )
-        for row in rows:
-            image_urls.extend([
-                row.get("front_image_url"),
-                row.get("back_image_url"),
-            ])
-    except Exception:
-        image_urls = []
+        rows = supabase.table(TABLE).select("id,front_image_url,back_image_url").eq("id", card_id).execute().data or []
+    except Exception as e:
+        st.error(f"⚠️ 삭제할 카드 정보를 읽지 못했습니다: {e}")
+        return False
+    if not rows:
+        st.warning("이미 삭제되었거나 존재하지 않는 카드입니다.")
+        return False
+
+    row = rows[0]
+    image_urls = [row.get("front_image_url"), row.get("back_image_url")]
+    archive_ok, archived = _archive_image_paths(image_urls)
+    if not archive_ok:
+        st.error("⚠️ 이미지의 안전한 휴지통 이동에 실패하여 카드 삭제를 중단했습니다.")
+        return False
 
     try:
         supabase.table(TABLE).delete().eq("id", card_id).execute()
-
-        storage_ok = _delete_images_from_storage(image_urls)
-        if image_urls and not storage_ok:
-            st.warning("⚠️ 카드는 삭제됐지만 연결된 이미지 일부를 Storage에서 지우지 못했습니다. Storage 삭제 권한을 확인해주세요.")
-
-        auto_backup()
-        clear_cards_cache()
-        return True
-    except Exception:
-        st.error("⚠️ 카드 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+    except Exception as e:
+        _restore_archived_paths(archived)
+        st.error(f"⚠️ 카드 삭제에 실패해 이미지를 원래대로 복원했습니다: {e}")
         return False
+
+    if not _delete_progress_for_card_ids([card_id]):
+        st.warning("⚠️ 카드는 삭제됐지만 해당 카드의 오래된 학습 기록 일부를 정리하지 못했습니다.")
+    auto_backup()
+    clear_cards_cache()
+    return True
+
 
 def increment_wrong(card_id, current):
     try:
@@ -706,38 +843,36 @@ def reset_wrong_by_category(category):
         st.warning("⚠️ 카테고리 오답 초기화 실패 (네트워크/DB 상태 확인)")
 
 def delete_category(category: str):
-    image_urls = []
-
-    # 카테고리의 카드를 지우기 전에 연결된 모든 이미지 URL을 확보한다.
+    """카테고리 이미지를 휴지통에 보관한 뒤 카드와 해당 카드의 진행 기록을 안전하게 삭제한다."""
     try:
-        rows = (
-            supabase.table(TABLE)
-            .select("front_image_url,back_image_url")
-            .eq("category", category)
-            .execute()
-            .data or []
-        )
-        for row in rows:
-            image_urls.extend([
-                row.get("front_image_url"),
-                row.get("back_image_url"),
-            ])
-    except Exception:
-        image_urls = []
+        rows = supabase.table(TABLE).select("id,front_image_url,back_image_url").eq("category", category).execute().data or []
+    except Exception as e:
+        st.error(f"⚠️ 삭제할 카테고리 정보를 읽지 못했습니다: {e}")
+        return False
+
+    card_ids = [r.get("id") for r in rows if r.get("id") is not None]
+    image_urls = []
+    for row in rows:
+        image_urls.extend([row.get("front_image_url"), row.get("back_image_url")])
+
+    archive_ok, archived = _archive_image_paths(image_urls)
+    if not archive_ok:
+        st.error("⚠️ 이미지의 안전한 휴지통 이동에 실패하여 카테고리 삭제를 중단했습니다.")
+        return False
 
     try:
         supabase.table(TABLE).delete().eq("category", category).execute()
-
-        storage_ok = _delete_images_from_storage(image_urls)
-        if image_urls and not storage_ok:
-            st.warning("⚠️ 카테고리는 삭제됐지만 연결된 이미지 일부를 Storage에서 지우지 못했습니다. Storage 삭제 권한을 확인해주세요.")
-
-        auto_backup()
-        clear_cards_cache()
-        return True
-    except Exception:
-        st.error("⚠️ 카테고리 삭제에 실패했습니다. (Supabase 연결/정책/RLS/네트워크 확인)")
+    except Exception as e:
+        _restore_archived_paths(archived)
+        st.error(f"⚠️ 카테고리 삭제에 실패해 이미지를 원래대로 복원했습니다: {e}")
         return False
+
+    if not _delete_progress_for_card_ids(card_ids):
+        st.warning("⚠️ 카테고리는 삭제됐지만 해당 카드의 오래된 학습 기록 일부를 정리하지 못했습니다.")
+    auto_backup()
+    clear_cards_cache()
+    return True
+
 
 def merge_category(from_cat: str, to_cat: str):
     try:
@@ -776,13 +911,13 @@ def download_backup_json(filename: str):
         return None
 
 def split_backup_payload(obj):
-    """obj -> (cards_list, progress_list_or_None). progress_list 가 None 이면
-    예전 형식(카드만 있는 백업)이라 진행 기록은 복구하지 않는다는 뜻."""
+    """이전 백업 형식까지 호환하여 (cards, progress, learners)를 반환한다."""
     if isinstance(obj, dict):
-        return obj.get("cards") or [], obj.get("progress")
+        return obj.get("cards") or [], obj.get("progress"), obj.get("learners")
     if isinstance(obj, list):
-        return obj, None
-    return [], None
+        return obj, None, None
+    return [], None, None
+
 
 def restore_from_backup(filename: str):
     obj = download_backup_json(filename)
@@ -790,15 +925,18 @@ def restore_from_backup(filename: str):
         st.error("⚠️ 백업 파일을 읽을 수 없습니다. (형식/권한/파일 손상)")
         return False
 
-    backup_cards, backup_progress = split_backup_payload(obj)
-
-    cleaned = []
-    for c in backup_cards:
-        if isinstance(c, dict) and ("category" in c) and ("front" in c) and ("back" in c):
-            cleaned.append(c)
-
+    backup_cards, backup_progress, backup_learners = split_backup_payload(obj)
+    cleaned = [
+        c for c in backup_cards
+        if isinstance(c, dict) and all(k in c for k in ("category", "front", "back"))
+    ]
     if not cleaned:
         st.error("⚠️ 백업 데이터가 비어있거나 유효한 카드가 없습니다. 복구를 중단했습니다.")
+        return False
+
+    # 복구 직전 현재 상태를 자동 보존한다. 실패하면 덮어쓰기를 진행하지 않는다.
+    if not manual_backup_now():
+        st.error("⚠️ 복구 직전 안전 백업 생성에 실패하여 복구를 중단했습니다.")
         return False
 
     try:
@@ -807,33 +945,43 @@ def restore_from_backup(filename: str):
             st.error("⚠️ 현재 DB를 읽지 못했습니다. (Supabase 상태 확인)")
             return False
 
+        # 과거 삭제 때 휴지통으로 이동한 이미지가 있으면 DB 복구 전에 원위치한다.
+        images_ok = _restore_images_for_cards(cleaned)
+        if not images_ok:
+            st.warning("⚠️ 일부 이미지를 휴지통에서 복원하지 못했습니다. 해당 카드 이미지를 확인해주세요.")
+
         ids = [c.get("id") for c in current if c.get("id") is not None]
-        if ids:
-            chunk = 200
-            for i in range(0, len(ids), chunk):
-                batch = ids[i:i+chunk]
-                supabase.table(TABLE).delete().in_("id", batch).execute()
+        for i in range(0, len(ids), 200):
+            supabase.table(TABLE).delete().in_("id", ids[i:i+200]).execute()
 
-        chunk2 = 200
-        for i in range(0, len(cleaned), chunk2):
-            supabase.table(TABLE).insert(cleaned[i:i+chunk2]).execute()
+        for i in range(0, len(cleaned), 200):
+            supabase.table(TABLE).insert(cleaned[i:i+200]).execute()
 
-        # 학습자별 진행 기록도 함께 복구 (새 형식 백업에만 들어있음)
         if backup_progress is not None:
             supabase.table(PROGRESS_TABLE).delete().neq("learner", "").execute()
             cleaned_progress = [
                 p for p in backup_progress
                 if isinstance(p, dict) and ("learner" in p) and ("card_id" in p)
             ]
-            for i in range(0, len(cleaned_progress), chunk2):
-                supabase.table(PROGRESS_TABLE).insert(cleaned_progress[i:i+chunk2]).execute()
+            for i in range(0, len(cleaned_progress), 200):
+                supabase.table(PROGRESS_TABLE).insert(cleaned_progress[i:i+200]).execute()
+
+        # 학습자 이름은 절대 전체 삭제하지 않고, 백업·기존 진행 기록의 이름을 합쳐 보존한다.
+        learner_names = set()
+        for item in backup_learners or []:
+            if isinstance(item, dict) and item.get("learner"):
+                learner_names.add(normalize_learner_name(item["learner"]))
+        for p in backup_progress or []:
+            if isinstance(p, dict) and p.get("learner"):
+                learner_names.add(normalize_learner_name(p["learner"]))
+        for name in learner_names:
+            register_learner(name)
 
         auto_backup()
         clear_cards_cache()
         return True
-
-    except Exception:
-        st.error("⚠️ 복구 중 오류가 발생했습니다. (RLS/권한/DB 스키마/네트워크 확인)")
+    except Exception as e:
+        st.error(f"⚠️ 복구 중 오류가 발생했습니다: {e}")
         return False
 
 # =======================
@@ -934,6 +1082,7 @@ if not st.session_state.learner:
         if not final_name:
             st.warning("이름을 입력하거나 선택해주세요.")
         else:
+            register_learner(final_name)
             st.session_state.learner = final_name
             st.rerun()
     st.stop()
@@ -1264,12 +1413,33 @@ elif page == "🛠️ 카드 관리":
     c1, c2 = st.columns(2)
     with c1:
         if st.button("💾 수정"):
-            front_img = upload_image(front_file, "front") or card.get("front_image_url")
-            back_img = upload_image(back_file, "back") or card.get("back_image_url")
+            old_front = card.get("front_image_url")
+            old_back = card.get("back_image_url")
+            uploaded_front = upload_image(front_file, "front") if front_file else None
+            uploaded_back = upload_image(back_file, "back") if back_file else None
+            front_img = uploaded_front or old_front
+            back_img = uploaded_back or old_back
             ok = update_card(card["id"], new_cat, new_front, new_back, front_img, back_img)
             if ok:
+                replaced_old = []
+                if uploaded_front and old_front and uploaded_front != old_front:
+                    replaced_old.append(old_front)
+                if uploaded_back and old_back and uploaded_back != old_back:
+                    replaced_old.append(old_back)
+                if replaced_old:
+                    archive_ok, _ = _archive_image_paths(replaced_old)
+                    if not archive_ok:
+                        st.warning("⚠️ 수정은 완료됐지만 교체 전 이미지 일부를 휴지통으로 옮기지 못했습니다.")
                 sync()
                 st.success("수정 완료")
+            else:
+                # DB 수정 실패 시 새로 업로드한 파일만 제거해 고아 파일을 남기지 않는다.
+                new_urls = [u for u in (uploaded_front, uploaded_back) if u]
+                paths = [_storage_path_from_image_url(u) for u in new_urls]
+                try:
+                    supabase.storage.from_(IMAGE_BUCKET).remove([p for p in paths if p])
+                except Exception:
+                    pass
 
     with c2:
         if st.button("🗑️ 삭제"):
@@ -1373,12 +1543,12 @@ elif page == "🛠️ 카드 관리":
                 if preview is None:
                     st.error("백업 미리보기 실패 (파일 손상/권한/형식 문제)")
                 else:
-                    p_cards, p_progress = split_backup_payload(preview)
+                    p_cards, p_progress, p_learners = split_backup_payload(preview)
                     if p_progress is None:
                         st.warning("⚠️ 예전 형식 백업이라 진행 기록(오답 횟수/학습일)은 포함되어 있지 않습니다.")
                         st.success(f"카드 {len(p_cards)}개")
                     else:
-                        st.success(f"카드 {len(p_cards)}개 · 진행 기록 {len(p_progress)}개")
+                        st.success(f"카드 {len(p_cards)}개 · 진행 기록 {len(p_progress)}개 · 학습자 {len(p_learners or [])}명")
                     st.json(p_cards[:3])
 
         with c4:
@@ -1467,6 +1637,9 @@ elif page == "📄 PDF 가져오기":
         st.warning(f"'저장 실행'을 누르면 선택된 {included}개 카드가 '{cards[0]['category']}' 카테고리로 Supabase에 실제로 추가됩니다.")
         if st.button("💾 선택한 카드 전체 저장", type="primary"):
             to_save = [c for c in cards if c["include"]]
+            if not to_save:
+                st.warning("저장 대상으로 선택된 카드가 없습니다.")
+                st.stop()
             progress = st.progress(0, text="저장 중...")
             saved, failed = 0, 0
             for n, c in enumerate(to_save, start=1):
@@ -1485,6 +1658,7 @@ elif page == "📄 PDF 가져오기":
                         "",
                         None,
                         back_url,
+                        make_backup=False,
                     )
 
                 if ok:
@@ -1493,9 +1667,17 @@ elif page == "📄 PDF 가져오기":
                     failed += 1
                     # 이미지 업로드 후 DB 저장만 실패했으면 고아 파일이 남지 않도록 즉시 정리한다.
                     if back_url:
-                        _delete_images_from_storage([back_url])
+                        orphan_path = _storage_path_from_image_url(back_url)
+                        if orphan_path:
+                            try:
+                                supabase.storage.from_(IMAGE_BUCKET).remove([orphan_path])
+                            except Exception:
+                                pass
                 progress.progress(n / len(to_save), text=f"저장 중... ({n}/{len(to_save)})")
             progress.empty()
+            if saved:
+                auto_backup()
+                clear_cards_cache()
             st.success(f"✅ {saved}개 저장 완료" + (f" · ⚠️ {failed}개 실패" if failed else ""))
             st.session_state.pdf_cards = None
             sync()
