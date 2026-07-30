@@ -36,7 +36,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
-
+st.sidebar.warning("실행 버전: 백업정리안정화본-20260730")
 # =======================
 # 🎨 UI 스타일
 # =======================
