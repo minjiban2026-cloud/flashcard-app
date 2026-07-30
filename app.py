@@ -5,7 +5,7 @@ import re
 import uuid
 import httpx
 import html
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from supabase import create_client
 from postgrest.exceptions import APIError
@@ -19,6 +19,7 @@ SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 TABLE = "flashcard_app"
+PROGRESS_TABLE = "flashcard_progress"
 BACKUP_BUCKET = "flashcard-backup"
 IMAGE_BUCKET = "flashcard-images"
 
@@ -199,10 +200,80 @@ def clear_cards_cache():
     except Exception:
         pass
 
+# =======================
+# 👤 학습자별 진행 기록 (간격 반복용)
+# - flashcard_app 은 여러 학습자가 함께 쓰는 "공용 카드"이므로,
+#   오답 횟수/마지막으로 본 시각은 별도 테이블(flashcard_progress)에
+#   학습자별로 따로 저장한다.
+# =======================
+def normalize_learner_name(name: str) -> str:
+    """앞뒤 공백 제거 + 중간 연속 공백을 하나로 합쳐서 '민수'와 '민수 '를 같은 사람으로 취급"""
+    return re.sub(r"\s+", " ", (name or "").strip())
+
+def fetch_known_learners():
+    try:
+        res = supabase.table(PROGRESS_TABLE).select("learner").execute().data or []
+        names = {normalize_learner_name(r["learner"]) for r in res if r.get("learner")}
+        return sorted(n for n in names if n)
+    except Exception:
+        return []
+
+def fetch_progress_map(learner):
+    """{card_id: {"wrong_count":.., "last_reviewed_at":..}} 형태로 반환"""
+    learner = normalize_learner_name(learner)
+    if not learner:
+        return {}
+    try:
+        res = supabase.table(PROGRESS_TABLE).select("*").eq("learner", learner).execute().data or []
+        return {r["card_id"]: r for r in res}
+    except Exception:
+        return {}
+
+def upsert_progress(learner, card_id, wrong_count, last_reviewed_at):
+    learner = normalize_learner_name(learner)
+    try:
+        supabase.table(PROGRESS_TABLE).upsert({
+            "learner": learner,
+            "card_id": card_id,
+            "wrong_count": wrong_count,
+            "last_reviewed_at": last_reviewed_at,
+        }, on_conflict="learner,card_id").execute()
+        return True
+    except Exception:
+        st.warning("⚠️ 학습 기록 저장 실패 (flashcard_progress 테이블/네트워크 확인)")
+        return False
+
+def reset_progress(learner, card_ids):
+    learner = normalize_learner_name(learner)
+    if not card_ids:
+        return True
+    try:
+        supabase.table(PROGRESS_TABLE).delete().eq("learner", learner).in_("card_id", card_ids).execute()
+        return True
+    except Exception:
+        st.warning("⚠️ 학습 기록 초기화 실패 (flashcard_progress 테이블/네트워크 확인)")
+        return False
+
+def fetch_progress_rows():
+    """백업용: 전체 학습자의 진행 기록을 통째로 가져오기"""
+    try:
+        return supabase.table(PROGRESS_TABLE).select("*").execute().data or []
+    except Exception:
+        return []
+
+# =======================
+# 💾 백업 (카드 + 학습자별 진행 기록을 함께 저장)
+# =======================
+def _build_backup_payload():
+    return {
+        "cards": fetch_cards(),
+        "progress": fetch_progress_rows(),
+    }
+
 def auto_backup():
     try:
-        cards = fetch_cards()
-        content = json.dumps(cards, ensure_ascii=False, indent=2)
+        payload = _build_backup_payload()
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         supabase.storage.from_(BACKUP_BUCKET).upload(
             filename,
@@ -214,8 +285,8 @@ def auto_backup():
 
 def manual_backup_now():
     try:
-        cards = fetch_cards()
-        content = json.dumps(cards, ensure_ascii=False, indent=2)
+        payload = _build_backup_payload()
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}_manual.json"
         supabase.storage.from_(BACKUP_BUCKET).upload(
             filename,
@@ -461,19 +532,34 @@ def list_backups(limit=30):
         return []
 
 def download_backup_json(filename: str):
+    """백업 파일을 그대로 반환. 새 형식({"cards":[...], "progress":[...]}) 과
+    예전 형식([카드,...]) 을 모두 허용한다."""
     try:
         data = supabase.storage.from_(BACKUP_BUCKET).download(filename)
         raw = data.read() if hasattr(data, "read") else data
         obj = json.loads(raw.decode("utf-8"))
-        return obj if isinstance(obj, list) else None
+        if isinstance(obj, dict) or isinstance(obj, list):
+            return obj
+        return None
     except Exception:
         return None
 
+def split_backup_payload(obj):
+    """obj -> (cards_list, progress_list_or_None). progress_list 가 None 이면
+    예전 형식(카드만 있는 백업)이라 진행 기록은 복구하지 않는다는 뜻."""
+    if isinstance(obj, dict):
+        return obj.get("cards") or [], obj.get("progress")
+    if isinstance(obj, list):
+        return obj, None
+    return [], None
+
 def restore_from_backup(filename: str):
-    backup_cards = download_backup_json(filename)
-    if backup_cards is None:
+    obj = download_backup_json(filename)
+    if obj is None:
         st.error("⚠️ 백업 파일을 읽을 수 없습니다. (형식/권한/파일 손상)")
         return False
+
+    backup_cards, backup_progress = split_backup_payload(obj)
 
     cleaned = []
     for c in backup_cards:
@@ -500,6 +586,16 @@ def restore_from_backup(filename: str):
         chunk2 = 200
         for i in range(0, len(cleaned), chunk2):
             supabase.table(TABLE).insert(cleaned[i:i+chunk2]).execute()
+
+        # 학습자별 진행 기록도 함께 복구 (새 형식 백업에만 들어있음)
+        if backup_progress is not None:
+            supabase.table(PROGRESS_TABLE).delete().neq("learner", "").execute()
+            cleaned_progress = [
+                p for p in backup_progress
+                if isinstance(p, dict) and ("learner" in p) and ("card_id" in p)
+            ]
+            for i in range(0, len(cleaned_progress), chunk2):
+                supabase.table(PROGRESS_TABLE).insert(cleaned_progress[i:i+chunk2]).execute()
 
         auto_backup()
         clear_cards_cache()
@@ -581,6 +677,45 @@ def count_by_category(cards, category):
 # =======================
 st.markdown('<div class="app-title">📘 임용 대비 암기 카드</div>', unsafe_allow_html=True)
 
+# =======================
+# 👤 학습자 선택 (맨 처음 진입 시 필수)
+# - 여러 명이 카드를 공유해서 쓰기 때문에, 오답 횟수/마지막 학습일 같은
+#   개인 진행 기록은 여기서 고른 이름 기준으로 저장·조회한다.
+# =======================
+if "learner" not in st.session_state:
+    st.session_state.learner = None
+
+if not st.session_state.learner:
+    st.markdown("#### 👤 학습자 이름을 선택해주세요")
+    known_learners = fetch_known_learners()
+    choice = st.selectbox(
+        "기존 학습자",
+        ["-- 새 이름 입력 --"] + known_learners,
+        key="learner_select",
+    ) if known_learners else "-- 새 이름 입력 --"
+
+    new_name = ""
+    if choice == "-- 새 이름 입력 --":
+        new_name = st.text_input("이름 입력", key="learner_new_name", placeholder="예: 민수").strip()
+
+    if st.button("✅ 시작하기", use_container_width=True):
+        final_name = normalize_learner_name(new_name if choice == "-- 새 이름 입력 --" else choice)
+        if not final_name:
+            st.warning("이름을 입력하거나 선택해주세요.")
+        else:
+            st.session_state.learner = final_name
+            st.rerun()
+    st.stop()
+else:
+    hc1, hc2 = st.columns([4, 1])
+    with hc1:
+        st.caption(f"👤 현재 학습자: **{st.session_state.learner}**")
+    with hc2:
+        if st.button("전환", use_container_width=True):
+            st.session_state.learner = None
+            st.session_state.progress_map = {}
+            st.rerun()
+
 if not st.session_state.supabase_ok:
     st.error("⚠️ Supabase 프로젝트가 잠들어 있거나(Paused), 깨는 중이거나 네트워크 문제로 연결에 실패했습니다.\n\nSupabase에서 Resume 후 아래 버튼을 눌러주세요.")
     if st.button("🔄 다시 시도"):
@@ -660,6 +795,43 @@ elif page == "🧠 암기 모드":
         st.session_state.show_back = False
         st.session_state.order = []
 
+    if "progress_map" not in st.session_state:
+        st.session_state.progress_map = {}
+    if "progress_loaded_for" not in st.session_state:
+        st.session_state.progress_loaded_for = None
+    if st.session_state.progress_loaded_for != st.session_state.learner:
+        st.session_state.progress_map = fetch_progress_map(st.session_state.learner)
+        st.session_state.progress_loaded_for = st.session_state.learner
+
+    def _learner_wrong(card_id):
+        p = st.session_state.progress_map.get(card_id)
+        return int(p["wrong_count"]) if p else 0
+
+    def _learner_last_reviewed(card_id):
+        p = st.session_state.progress_map.get(card_id)
+        return p.get("last_reviewed_at") if p else None
+
+    def _days_since(iso_str):
+        if not iso_str:
+            return 9999.0  # 한 번도 안 본 카드는 최우선으로
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return max((datetime.utcnow() - dt).total_seconds() / 86400, 0.0)
+        except Exception:
+            return 9999.0
+
+    def _mark_reviewed(card_id, mark_wrong=False):
+        cur = _learner_wrong(card_id)
+        new_wrong = cur + 1 if mark_wrong else cur
+        now_iso = datetime.utcnow().isoformat()
+        upsert_progress(st.session_state.learner, card_id, new_wrong, now_iso)
+        st.session_state.progress_map[card_id] = {
+            "learner": st.session_state.learner, "card_id": card_id,
+            "wrong_count": new_wrong, "last_reviewed_at": now_iso,
+        }
+
     cards = st.session_state.study_cards
     cat_list = categories(cards)
     if not cat_list:
@@ -670,7 +842,11 @@ elif page == "🧠 암기 모드":
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        random_mode = st.checkbox("🔀 랜덤")
+        order_mode = st.selectbox(
+            "정렬",
+            ["🔀 랜덤", "🧠 추천순(간격 반복)", "➡️ 기본순"],
+            key="study_order_mode",
+        )
     with c2:
         wrong_only = st.checkbox("❗ 오답만")
     with c3:
@@ -678,7 +854,10 @@ elif page == "🧠 암기 모드":
     with c4:
         recall_mode = st.checkbox("🧠 회상 모드")
 
-    st.caption("회상 모드: 설명을 보고 해당 개념을 떠올리는 연습")
+    st.caption(
+        "회상 모드: 설명을 보고 해당 개념을 떠올리는 연습  ·  "
+        "추천순: 안 본 지 오래됐거나 많이 틀린 카드부터 보여줍니다 (학습자별 기록 기준)"
+    )
 
     q = st.text_input(
         "🔎 검색",
@@ -686,7 +865,7 @@ elif page == "🧠 암기 모드":
         placeholder="앞면/뒷면에서 키워드로 찾기 (예: CRC, 오스테나이트, 서브넷)",
     ).strip().lower()
 
-    filter_sig = (cat, bool(random_mode), bool(wrong_only), bool(enter_only), bool(recall_mode), q)
+    filter_sig = (cat, order_mode, bool(wrong_only), bool(enter_only), bool(recall_mode), q, st.session_state.learner)
     if st.session_state.study_filter_sig is None:
         st.session_state.study_filter_sig = filter_sig
     elif st.session_state.study_filter_sig != filter_sig:
@@ -697,7 +876,7 @@ elif page == "🧠 암기 모드":
 
     base = [c for c in cards if c.get("category") == cat]
     if wrong_only:
-        base = [c for c in base if int(c.get("wrong_count") or 0) > 0]
+        base = [c for c in base if _learner_wrong(c["id"]) > 0]
 
     if q:
         base = [
@@ -714,7 +893,7 @@ elif page == "🧠 암기 모드":
         st.info("표시할 카드가 없습니다.")
         st.stop()
 
-    if random_mode:
+    if order_mode == "🔀 랜덤":
         if st.button("🔄 다시 섞기"):
             st.session_state.order = random.sample(ids, len(ids))
             st.session_state.index = 0
@@ -726,6 +905,12 @@ elif page == "🧠 암기 모드":
             st.session_state.show_back = False
 
         order = st.session_state.order
+    elif order_mode == "🧠 추천순(간격 반복)":
+        # 틀린 횟수가 많을수록, 안 본 지 오래될수록 앞쪽으로
+        def _priority(cid):
+            return -(_learner_wrong(cid) * 2 + _days_since(_learner_last_reviewed(cid)))
+        order = sorted(ids, key=_priority)
+        st.session_state.order = []
     else:
         order = ids
         st.session_state.order = []
@@ -756,8 +941,12 @@ elif page == "🧠 암기 모드":
 
     safe_text = render_safe_text(text)
 
+    wc = _learner_wrong(card["id"])
+    lr = _learner_last_reviewed(card["id"])
+    lr_caption = "안 본 기록 없음" if not lr else f"{_days_since(lr):.1f}일 전에 봄"
     st.markdown(
-        f'<div class="progress">{st.session_state.index + 1} / {len(order)}</div>',
+        f'<div class="progress">{st.session_state.index + 1} / {len(order)}'
+        f' · 나의 오답 {wc}회 · {lr_caption}</div>',
         unsafe_allow_html=True
     )
 
@@ -778,6 +967,7 @@ elif page == "🧠 암기 모드":
             if not st.session_state.show_back:
                 st.session_state.show_back = True
             else:
+                _mark_reviewed(card["id"])
                 st.session_state.show_back = False
                 st.session_state.index += 1
     else:
@@ -788,26 +978,29 @@ elif page == "🧠 암기 모드":
             cc1, cc2 = st.columns(2)
             with cc1:
                 if st.button("✅ 정답"):
+                    _mark_reviewed(card["id"])
                     st.session_state.show_back = False
                     st.session_state.index += 1
             with cc2:
                 if st.button("❌ 오답"):
-                    increment_wrong(card["id"], int(card.get("wrong_count") or 0))
+                    _mark_reviewed(card["id"], mark_wrong=True)
                     st.session_state.show_back = False
                     st.session_state.index += 1
-                    sync()
 
             if st.button("🧹 이 카드 오답 제외"):
-                reset_wrong(card["id"])
+                reset_progress(st.session_state.learner, [card["id"]])
+                st.session_state.progress_map.pop(card["id"], None)
                 st.session_state.show_back = False
-                sync()
+                st.rerun()
 
     if wrong_only:
         if st.button("🧹 이 카테고리 오답 전체 리셋"):
-            reset_wrong_by_category(cat)
-            sync()
-            st.success("이 카테고리의 오답이 모두 초기화되었습니다.")
-            st.stop()
+            cat_ids = [c["id"] for c in cards if c.get("category") == cat and c.get("id") is not None]
+            reset_progress(st.session_state.learner, cat_ids)
+            for cid2 in cat_ids:
+                st.session_state.progress_map.pop(cid2, None)
+            st.success("이 카테고리에서 나의 오답 기록이 모두 초기화되었습니다.")
+            st.rerun()
 
 # =======================
 # 3️⃣ 카드 관리
@@ -932,7 +1125,7 @@ elif page == "🛠️ 카드 관리":
 
     st.markdown("---")
     with st.expander("♻️ 백업 복구 (전체 덮어쓰기)", expanded=False):
-        st.caption("⚠️ 선택한 백업으로 DB의 카드가 **전체 교체**됩니다. (현재 데이터는 삭제 후 백업 데이터로 복원)")
+        st.caption("⚠️ 선택한 백업으로 DB의 카드와 학습자별 진행 기록(오답 횟수/마지막 학습일)이 모두 **전체 교체**됩니다. (현재 데이터는 삭제 후 백업 데이터로 복원)")
 
         b1, b2 = st.columns(2)
         with b1:
@@ -961,8 +1154,13 @@ elif page == "🛠️ 카드 관리":
                 if preview is None:
                     st.error("백업 미리보기 실패 (파일 손상/권한/형식 문제)")
                 else:
-                    st.success(f"카드 {len(preview)}개")
-                    st.json(preview[:3])
+                    p_cards, p_progress = split_backup_payload(preview)
+                    if p_progress is None:
+                        st.warning("⚠️ 예전 형식 백업이라 진행 기록(오답 횟수/학습일)은 포함되어 있지 않습니다.")
+                        st.success(f"카드 {len(p_cards)}개")
+                    else:
+                        st.success(f"카드 {len(p_cards)}개 · 진행 기록 {len(p_progress)}개")
+                    st.json(p_cards[:3])
 
         with c4:
             confirm = st.checkbox("이 백업으로 복구(전체 덮어쓰기)에 동의합니다.", key="restore_confirm")
