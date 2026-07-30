@@ -6,6 +6,7 @@ import uuid
 import httpx
 import html
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from io import BytesIO
 from urllib.parse import urlparse, unquote
 from supabase import create_client
@@ -24,6 +25,8 @@ PROGRESS_TABLE = "flashcard_progress"
 LEARNERS_TABLE = "flashcard_learners"
 BACKUP_BUCKET = "flashcard-backup"
 IMAGE_BUCKET = "flashcard-images"
+AUTO_BACKUP_KEEP = 30  # 자동 백업은 최근 30개만 유지하며, 수동 백업은 자동 삭제하지 않음
+KST = ZoneInfo("Asia/Seoul")
 
 # =======================
 # 기본 설정
@@ -448,24 +451,55 @@ def _build_backup_payload():
         "learners": fetch_learner_rows(),
     }
 
+def _backup_timestamp():
+    """한국 시간 기준이며 같은 초에 여러 백업이 생겨도 파일명이 겹치지 않는다."""
+    return datetime.now(KST).strftime("%Y%m%d_%H%M%S_%f")
+
+
+def _prune_old_auto_backups(keep=AUTO_BACKUP_KEEP):
+    """자동 백업만 최근 keep개 유지한다. *_manual.json은 절대 자동 삭제하지 않는다."""
+    try:
+        items = supabase.storage.from_(BACKUP_BUCKET).list(path="") or []
+        auto_names = []
+        for item in items:
+            name = item.get("name") if isinstance(item, dict) else None
+            if not name or not name.startswith("backup_") or not name.endswith(".json"):
+                continue
+            if name.endswith("_manual.json"):
+                continue
+            auto_names.append(name)
+
+        auto_names.sort(reverse=True)
+        old_names = auto_names[max(0, int(keep)):]
+        for i in range(0, len(old_names), 100):
+            supabase.storage.from_(BACKUP_BUCKET).remove(old_names[i:i + 100])
+        return True
+    except Exception:
+        # 백업 생성 자체는 성공했을 수 있으므로 정리 실패 때문에 본 작업을 실패 처리하지 않는다.
+        return False
+
+
 def auto_backup():
     try:
         payload = _build_backup_payload()
         content = json.dumps(payload, ensure_ascii=False, indent=2)
-        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"backup_{_backup_timestamp()}.json"
         supabase.storage.from_(BACKUP_BUCKET).upload(
             filename,
             content.encode("utf-8"),
             file_options={"content-type": "application/json"},
         )
-    except:
-        pass
+        _prune_old_auto_backups()
+        return True
+    except Exception:
+        return False
+
 
 def manual_backup_now():
     try:
         payload = _build_backup_payload()
         content = json.dumps(payload, ensure_ascii=False, indent=2)
-        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}_manual.json"
+        filename = f"backup_{_backup_timestamp()}_manual.json"
         supabase.storage.from_(BACKUP_BUCKET).upload(
             filename,
             content.encode("utf-8"),
