@@ -1524,23 +1524,22 @@ elif page == "🧠 암기 모드":
     )
 
     image_html = ""
+    if img:
+        safe_img_url = html.escape(str(img), quote=True)
+        image_html = (
+            f'<img src="{safe_img_url}" '
+            f'class="flashcard-image" alt="암기카드 이미지">'
+        )
 
-if img:
-    safe_img_url = html.escape(str(img), quote=True)
-    image_html = (
-        f'<img src="{safe_img_url}" '
-        f'class="flashcard-image" alt="암기카드 이미지">'
+    card_html = (
+        '<div class="flashcard">'
+        f'<div class="flashcard-label">{html.escape(label)}</div>'
+        f'{text_html}'
+        f'{image_html}'
+        '</div>'
     )
 
-card_html = (
-    '<div class="flashcard">'
-    f'<div class="flashcard-label">{html.escape(label)}</div>'
-    f'{text_html}'
-    f'{image_html}'
-    '</div>'
-)
-
-st.markdown(card_html, unsafe_allow_html=True)
+    st.markdown(card_html, unsafe_allow_html=True)
 
     if enter_only:
         st.caption("⌨️ Enter 키를 눌러 진행합니다")
